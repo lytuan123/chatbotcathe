@@ -8,7 +8,7 @@ import faiss
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
-# Cấu hình logging với mã hóa UTF-8
+# Cấu hình logging
 log_dir = "logs"
 log_file = os.path.join(log_dir, "rag_pipeline.log")
 os.makedirs(log_dir, exist_ok=True)
@@ -16,8 +16,7 @@ os.makedirs(log_dir, exist_ok=True)
 logging.basicConfig(
     filename=log_file,
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    encoding='utf-8'  # Thêm tham số encoding
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
 # Tạo thư mục cache và history
@@ -26,20 +25,18 @@ history_file = "history/chat_history.json"
 os.makedirs("cache", exist_ok=True)
 os.makedirs("history", exist_ok=True)
 
-# Đảm bảo file cache và history có mã hóa đúng
+# Đảm bảo file cache và history tồn tại
 if not os.path.exists(cache_file):
-    with open(cache_file, "w", encoding="utf-8") as f:
+    with open(cache_file, "w") as f:
         json.dump({}, f, ensure_ascii=False, indent=4)
 
 if not os.path.exists(history_file):
-    with open(history_file, "w", encoding="utf-8") as f:
+    with open(history_file, "w") as f:
         json.dump([], f, ensure_ascii=False, indent=4)
 
 # Tải API Key từ .env
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
-print(f"OPENAI_API_KEY: {openai.api_key}")  # Kiểm tra API Key
-
 # Khởi tạo Flask app
 app = Flask(__name__)
 
@@ -53,12 +50,12 @@ class ModelManager:
 
     def load_cache(self):
         """Load cache từ file."""
-        with open(cache_file, "r", encoding="utf-8") as f:
+        with open(cache_file, "r") as f:
             return json.load(f)
 
     def save_cache(self):
         """Lưu cache vào file."""
-        with open(cache_file, "w", encoding="utf-8") as f:
+        with open(cache_file, "w") as f:
             json.dump(self.cache, f, ensure_ascii=False, indent=4)
 
     def call_openai_model(self, prompt: str) -> str:
@@ -73,7 +70,8 @@ class ModelManager:
                 model="gpt-4o-mini",  # Sử dụng mô hình GPT-4o-mini như yêu cầu
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
-                max_tokens=500
+                max_tokens=500,
+                request_timeout=30
             )
             answer = response.choices[0].message["content"]
             self.cache[prompt] = answer
@@ -164,46 +162,60 @@ def home():
 @app.route('/answer', methods=['POST'])
 def answer():
     try:
-        print("Endpoint '/answer' hit")
         logging.info("Endpoint '/answer' hit")
-        data = request.get_json()
-        print(f"Received data: {data}")
-        logging.info(f"Received data: {data}")
+        
+        # Log raw request data
+        raw_data = request.get_data()
+        logging.info(f"Raw request data: {raw_data}")
+        
+        # Verify JSON parsing
+        try:
+            data = request.get_json()
+            logging.info(f"Parsed JSON data: {data}")
+        except Exception as e:
+            logging.error(f"JSON parsing error: {e}")
+            return jsonify({"error": f"Invalid JSON format: {str(e)}"}), 400
+            
+        # Check for query parameter
         query = data.get('query')
         if not query:
-            print("Missing 'query' parameter in request.")
-            logging.warning("Missing 'query' parameter in request.")
-            return jsonify({"error": "Missing 'query' parameter."}), 400
-
-        print(f"Processing query: {query}")
+            logging.warning("Missing 'query' parameter in request")
+            return jsonify({"error": "Missing 'query' parameter"}), 400
+            
+        # Verify required files exist
+        required_files = ["faiss_index.bin", "chunked_texts.pkl"]
+        for file in required_files:
+            if not os.path.exists(file):
+                error_msg = f"Required file {file} not found"
+                logging.error(error_msg)
+                return jsonify({"error": error_msg}), 500
+                
+        # Process query
         logging.info(f"Processing query: {query}")
         answer = rag_pipeline.get_answer(query)
-        print(f"Generated answer: {answer}")
         logging.info(f"Generated answer: {answer}")
 
-        # Lưu lịch sử
-        with open(history_file, "r+", encoding="utf-8") as f:
-            history = json.load(f)
-            history.append({"user": query, "bot": answer})
-            if len(history) > MAX_HISTORY_LENGTH:
-                history = history[-MAX_HISTORY_LENGTH:]
-            f.seek(0)
-            json.dump(history, f, ensure_ascii=False, indent=4)
-        print("History updated successfully.")
-        logging.info("History updated successfully.")
-
+        # Update history
+        try:
+            with open(history_file, "r+") as f:
+                history = json.load(f)
+                history.append({"user": query, "bot": answer})
+                if len(history) > MAX_HISTORY_LENGTH:
+                    history = history[-MAX_HISTORY_LENGTH:]
+                f.seek(0)
+                f.truncate()
+                json.dump(history, f, ensure_ascii=False, indent=4)
+            logging.info("History updated successfully")
+        except Exception as e:
+            logging.error(f"Error updating history: {e}")
+            # Continue even if history update fails
+            
         return jsonify({"query": query, "answer": answer})
-    except FileNotFoundError as e:
-        print(f"File error: {e}")
-        logging.error(f"File error: {e}")
-        return jsonify({"error": str(e)}), 500
+        
     except Exception as e:
-        print(f"Unexpected error: {e}")
-        logging.error(f"Unexpected error: {e}")
-        # Trả về thông báo lỗi chi tiết trong môi trường phát triển
+        logging.error(f"Unexpected error: {str(e)}", exc_info=True)
         return jsonify({"error": f"Unexpected error occurred: {str(e)}"}), 500
 # Chạy ứng dụng Flask
 if __name__ == '__main__':
     port = int(os.getenv("PORT", 5000))  # Lấy cổng từ biến môi trường hoặc mặc định là 5000
     app.run(host='0.0.0.0', port=port, debug=False)
-

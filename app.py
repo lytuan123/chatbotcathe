@@ -216,6 +216,22 @@ def answer():
         logging.error(f"Unexpected error: {str(e)}", exc_info=True)
         return jsonify({"error": f"Unexpected error occurred: {str(e)}"}), 500
 # Chạy ứng dụng Flask
+# Sửa phần chạy app
 if __name__ == '__main__':
-    port = int(os.getenv("PORT", 5000))  # Lấy cổng từ biến môi trường hoặc mặc định là 5000
-    app.run(host='0.0.0.0', port=port, debug=False)
+    try:
+        # Thêm logging khi khởi động
+        logging.info("Starting application...")
+        
+        # Lấy PORT từ biến môi trường của Railway
+        port = os.environ.get('PORT', 5000)
+        
+        # In thông tin port để debug
+        print(f"Starting server on port {port}")
+        logging.info(f"Starting server on port {port}")
+        
+        # Chạy app với host và port
+        app.run(host='0.0.0.0', port=port)
+        
+    except Exception as e:
+        print(f"Failed to start server: {e}")
+        logging.error(f"Failed to start server: {e}")

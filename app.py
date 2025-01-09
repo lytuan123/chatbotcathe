@@ -104,7 +104,7 @@ class RAGPipeline:
             logging.info("Initializing Model Manager...")
             self.model_manager = ModelManager()
 
-            self.prompt_template = """Với tư cách là một chuyên gia về điều tra thống kê tại Việt Nam, hãy phân tích và trả lời câu hỏi dựa trên kiến thức chuyên môn từ tài liệu hướng dẫn nghiệp vụ:
+            self.prompt_template = """Trả lời câu hỏi về các nghiệp vụ điều tra thống kê dựa trên ngữ cảnh:
 {context}
 
 Câu hỏi: {question}

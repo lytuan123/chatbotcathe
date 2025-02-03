@@ -223,7 +223,7 @@ if __name__ == '__main__':
         logging.info("Starting application...")
         
         # Lấy PORT từ biến môi trường của Railway
-        port = os.environ.get('PORT', 5000)
+        port = os.environ.get('PORT', 10000)
         
         # In thông tin port để debug
         print(f"Starting server on port {port}")

@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # --- Định nghĩa cấu trúc dữ liệu cho API Request và Response ---
 class QuestionRequest(BaseModel):
-    message: str  # Trường 'message' để tương thích với ứng dụng Android
+    query: str  # Thay đổi từ 'message' sang 'query'
 
 class AnswerResponse(BaseModel):
     answer: str
@@ -283,16 +283,16 @@ except RuntimeError as init_error:
 
 # --- API Endpoints ---
 @app.post("/answer", response_model=AnswerResponse, summary="Trả lời câu hỏi", description="API endpoint để trả lời câu hỏi về nghiệp vụ điều tra dân số.")
-async def get_api_answer(request: QuestionRequest): # FastAPI validation dựa trên QuestionRequest
-    """Endpoint API chính để nhận câu hỏi (message) và trả về câu trả lời."""
+async def get_api_answer(request: QuestionRequest):
+    """Endpoint API chính để nhận câu hỏi (query) và trả về câu trả lời."""
     if rag_pipeline is None:
         raise HTTPException(status_code=503, detail="Dịch vụ chưa sẵn sàng. RAG Pipeline không khởi tạo được.")
     try:
-        message_content = request.message # Lấy message từ request đã được validate
-        answer = rag_pipeline.get_answer(message_content) # Truyền message vào pipeline
+        message_content = request.query  # Thay đổi từ request.message sang request.query
+        answer = rag_pipeline.get_answer(message_content)
         return AnswerResponse(answer=answer)
     except HTTPException as e:
-        rag_pipeline.logger.warning(f"Lỗi API xử lý '{request.message[:50]}...': {e.status_code} - {e.detail}")
+        rag_pipeline.logger.warning(f"Lỗi API xử lý '{request.query[:50]}...': {e.status_code} - {e.detail}")
         raise e
     except Exception as e:
         rag_pipeline.logger.error(f"Lỗi không xác định tại endpoint /answer: {e}", exc_info=True)

@@ -221,15 +221,14 @@ app = FastAPI(
 # --- Cấu hình CORS Middleware ---
 origins = ["*"] # Cho phép tất cả origins để dễ dàng test, CÂN NHẮC GIỚI HẠN TRONG PRODUCTION
 
+# --- Middleware log request ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["https://aiwiki.vn"],  # Chỉ định domain frontend
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["POST", "OPTIONS"],    # Cho phép POST và OPTIONS
+    allow_headers=["Content-Type", "Accept"],  # Các header được phép
 )
-
-# --- Middleware log request ---
 @app.middleware("http")
 async def log_requests_middleware(request: Request, call_next):
     """Middleware để log thông tin request và response."""

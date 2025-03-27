@@ -8,7 +8,7 @@ import faiss
 from openai import OpenAI
 from dotenv import load_dotenv
 import time
-
+from fastapi.middleware.cors import CORSMiddleware # <-- THÊM IMPORT NÀY
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -245,6 +245,23 @@ app = FastAPI(
     title="Population Survey RAG API",
     description="API trả lời câu hỏi về nghiệp vụ điều tra biến động dân số.",
     version="1.0.0"
+)
+
+# --- Cấu hình CORS Middleware --- # <-- THÊM PHẦN NÀY
+origins = [
+    "http://localhost",  # Cho phép từ localhost (nếu bạn test từ trình duyệt cục bộ)
+    "http://localhost:8080", # Ví dụ cổng phát triển frontend/Android emulator
+    "app://*",  # Một số lược đồ có thể được sử dụng bởi ứng dụng di động
+    # "https://your-android-app-origin.com", # THÊM ORIGIN CỤ THỂ CỦA BẠN NẾU CÓ
+    "*" # HOẶC CHO PHÉP TẤT CẢ ORIGINS (dùng thận trọng trong production)
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # Danh sách các origin được phép
+    allow_credentials=True, # Cho phép gửi cookie (nếu cần)
+    allow_methods=["*"],    # Cho phép tất cả các phương thức (GET, POST, OPTIONS, etc.)
+    allow_headers=["*"],    # Cho phép tất cả các header
 )
 
 # --- Middleware log request ---

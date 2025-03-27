@@ -202,6 +202,7 @@ class RAGPipeline:
             context = self.get_relevant_context(query)
             if context.startswith("Lỗi khi tìm kiếm thông tin liên quan:") or context == "Không tìm thấy thông tin liên quan trong tài liệu.":
                 self.logger.warning(f"Context không phù hợp hoặc lỗi khi tìm kiếm: {context}")
+                return "Xin lỗi, hiện tại tôi không thể tìm thấy thông tin liên quan đến câu hỏi của bạn trong tài liệu."
 
             prompt = f"""Bạn là một trợ lý AI chuyên nghiệp, chuyên trả lời câu hỏi về nghiệp vụ điều tra biến động dân số ngày 1/04/2025.
             Sử dụng thông tin trong phần "Context" dưới đây để trả lời câu hỏi một cách chính xác và chi tiết nhất.
@@ -219,7 +220,7 @@ class RAGPipeline:
 
             start_time = time.time()
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="chatgpt-4o",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
                 max_tokens=1500

@@ -1,7 +1,7 @@
 # --- Core AI/ML ---
 openai>=1.3.0,<2.0.0
 faiss-cpu~=1.7.4
-numpy~=1.21.6
+numpy~=1.21.1
 
 # --- Web API Framework ---
 # FastAPI và Pydantic V1 cho Python 3.9

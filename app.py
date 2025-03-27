@@ -165,27 +165,36 @@ class RAGPipeline:
         raise RuntimeError("Không thể lấy embedding sau nhiều lần thử lại.")
 
     def get_relevant_context(self, query: str, k: int = 3) -> str:
-        """Tìm kiếm context liên quan nhất từ FAISS index."""
         try:
             query_embedding = self.get_embedding(query)
             distances, indices = self.index.search(
                 np.array([query_embedding]),
                 min(k, self.index.ntotal)
             )
-            threshold = 1.0
+            
+            # Debug: In thông tin chi tiết
+            self.logger.info(f"Distances: {distances}")
+            self.logger.info(f"Indices: {indices}")
+            
+            threshold = 5.0  # Điều chỉnh ngưỡng
             valid_indices = indices[0][distances[0] < threshold]
-
+            
+            self.logger.info(f"Valid Indices: {valid_indices}")
+            
             if len(valid_indices) == 0:
-                self.logger.info(f"Không tìm thấy context phù hợp cho query: {query[:50]}...")
+                # Log thêm thông tin để debug
+                self.logger.warning(f"No context found for query: {query}")
+                self.logger.warning(f"Raw distances: {distances}")
+                self.logger.warning(f"Raw indices: {indices}")
                 return "Không tìm thấy thông tin liên quan trong tài liệu."
-
+    
             contexts = [self.processed_texts[i] for i in valid_indices if 0 <= i < len(self.processed_texts)]
-            self.logger.info(f"Tìm thấy {len(contexts)} context phù hợp.")
+            self.logger.info(f"Found {len(contexts)} contexts")
             return "\n\n---\n\n".join(contexts)
 
-        except Exception as e:
-            self.logger.error(f"Lỗi trong get_relevant_context: {e}", exc_info=True)
-            return f"Lỗi khi tìm kiếm thông tin liên quan: {str(e)}"
+    except Exception as e:
+        self.logger.error(f"Error in get_relevant_context: {e}", exc_info=True)
+        return f"Lỗi khi tìm kiếm thông tin liên quan: {str(e)}"
 
     def get_answer(self, query: str) -> str:
         """Trả lời câu hỏi dựa trên context và OpenAI API, sử dụng cache."""

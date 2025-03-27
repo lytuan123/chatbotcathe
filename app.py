@@ -221,8 +221,28 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS và middleware giữ nguyên như code cũ
+# --- Cấu hình CORS Middleware ---
+origins = ["*"] # Cho phép tất cả origins để dễ dàng test, CÂN NHẮC GIỚI HẠN TRONG PRODUCTION
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Middleware log request ---
+@app.middleware("http")
+async def log_requests_middleware(request: Request, call_next):
+    """Middleware để log thông tin request và response."""
+    start_time = time.time()
+    logger = logging.getLogger("api.requests")
+    logger.info(f"Request: {request.method} {request.url.path}")
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    logger.info(f"Response: {response.status_code} (took {process_time:.4f}s)")
+    return response
 @app.post("/answer", response_model=AnswerResponse)
 async def get_api_answer(request: QuestionRequest):
     """Endpoint chính cho việc trả lời câu hỏi."""

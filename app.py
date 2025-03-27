@@ -8,23 +8,24 @@ import faiss
 from openai import OpenAI
 from dotenv import load_dotenv
 import time
-from fastapi.middleware.cors import CORSMiddleware # <-- THÊM IMPORT NÀY
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from logging.handlers import RotatingFileHandler
+from fastapi.middleware.cors import CORSMiddleware
 
-# --- Định nghĩa cấu trúc dữ liệu cho API ---
+# --- Định nghĩa cấu trúc dữ liệu cho API Request và Response ---
 class QuestionRequest(BaseModel):
-    question: str
+    message: str  # Trường 'message' để tương thích với ứng dụng Android
 
 class AnswerResponse(BaseModel):
     answer: str
 
-# --- Class RAGPipeline (Tối ưu hóa và làm rõ) ---
+# --- Class RAGPipeline (Tối ưu hóa và Hoàn chỉnh) ---
 class RAGPipeline:
     def __init__(self):
-        """Khởi tạo pipeline RAG, bao gồm logging, OpenAI client, và load dữ liệu."""
+        """Khởi tạo pipeline RAG: logging, OpenAI client, load dữ liệu."""
         self._setup_logging()
         self.logger.info("Khởi tạo RAG Pipeline...")
         try:
@@ -55,25 +56,27 @@ class RAGPipeline:
             raise RuntimeError("Không thể khởi tạo RAG Pipeline do lỗi không xác định.") from e
 
     def _setup_logging(self):
-        """Thiết lập cấu hình logging cho ứng dụng."""
+        """Thiết lập cấu hình logging với file rotation."""
         log_dir = Path("logs")
         log_dir.mkdir(exist_ok=True)
-        log_file = log_dir / "rag_api.log" # Tên log file cụ thể hơn
+        log_file = log_dir / "rag_api.log"
 
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s') # Đơn giản hóa format
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-        file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8') # 10MB mỗi file
+        file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
         file_handler.setFormatter(formatter)
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(formatter)
 
-        root_logger = logging.getLogger() # Logger gốc
-        root_logger.setLevel(logging.INFO) # Mức INFO cho toàn bộ ứng dụng (có thể DEBUG cho dev)
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+        if root_logger.hasHandlers():
+            root_logger.handlers.clear() # Clear existing handlers to prevent duplicates
         root_logger.addHandler(file_handler)
         root_logger.addHandler(stream_handler)
 
-        self.logger = logging.getLogger(__name__) # Logger riêng cho class này
-        self.logger.setLevel(logging.DEBUG) # Vẫn giữ DEBUG cho class RAGPipeline
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG)
 
     def _initialize_pipeline_data(self):
         """Load FAISS index và processed texts từ file."""
@@ -120,7 +123,7 @@ class RAGPipeline:
                 self.logger.info(f"Đã tạo file cache mới tại: {self.cache_file}")
         except Exception as e:
             self.logger.error(f"Lỗi khi load/tạo cache: {e}", exc_info=True)
-            self.cache = {} # Vẫn khởi tạo cache rỗng để ứng dụng tiếp tục chạy
+            self.cache = {}
 
     def _save_cache(self, query: str, answer: str):
         """Lưu câu hỏi và câu trả lời vào cache file."""
@@ -155,10 +158,10 @@ class RAGPipeline:
                 self.logger.warning(f"Lỗi lấy embedding (lần {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     self.logger.error(f"Không thể lấy embedding sau {max_retries} lần thử.")
-                    raise # Ném lại lỗi cuối cùng
+                    raise
                 time.sleep(delay * (attempt + 1))
 
-        raise RuntimeError("Không thể lấy embedding sau nhiều lần thử lại.") # Lỗi cuối cùng nếu retry thất bại
+        raise RuntimeError("Không thể lấy embedding sau nhiều lần thử lại.")
 
     def get_relevant_context(self, query: str, k: int = 3) -> str:
         """Tìm kiếm context liên quan nhất từ FAISS index."""
@@ -168,7 +171,7 @@ class RAGPipeline:
                 np.array([query_embedding]),
                 min(k, self.index.ntotal)
             )
-            threshold = 1.0 # Ngưỡng cần được điều chỉnh tùy theo dữ liệu và embedding model
+            threshold = 1.0
             valid_indices = indices[0][distances[0] < threshold]
 
             if len(valid_indices) == 0:
@@ -181,13 +184,13 @@ class RAGPipeline:
 
         except Exception as e:
             self.logger.error(f"Lỗi trong get_relevant_context: {e}", exc_info=True)
-            return f"Lỗi khi tìm kiếm thông tin liên quan: {str(e)}" # Trả về thông báo lỗi thay vì raise
+            return f"Lỗi khi tìm kiếm thông tin liên quan: {str(e)}"
 
     def get_answer(self, query: str) -> str:
         """Trả lời câu hỏi dựa trên context và OpenAI API, sử dụng cache."""
         query = query.strip()
         if not query:
-            raise HTTPException(status_code=400, detail="Câu hỏi không được để trống.")
+            raise HTTPException(status_code=400, detail="Nội dung 'message' không được để trống.")
 
         if query in self.cache:
             self.logger.info(f"Cache hit cho query: {query[:50]}...")
@@ -198,7 +201,6 @@ class RAGPipeline:
             context = self.get_relevant_context(query)
             if context.startswith("Lỗi khi tìm kiếm thông tin liên quan:") or context == "Không tìm thấy thông tin liên quan trong tài liệu.":
                 self.logger.warning(f"Context không phù hợp hoặc lỗi khi tìm kiếm: {context}")
-                # Tiếp tục gọi LLM ngay cả khi context không tối ưu, để LLM tự quyết định
 
             prompt = f"""Bạn là một trợ lý AI chuyên nghiệp, chuyên trả lời câu hỏi về nghiệp vụ điều tra biến động dân số ngày 1/04/2025.
             Sử dụng thông tin trong phần "Context" dưới đây để trả lời câu hỏi một cách chính xác và chi tiết nhất.
@@ -228,8 +230,8 @@ class RAGPipeline:
             self._save_cache(query, answer)
             return answer
 
-        except HTTPException as http_error: # Bắt lại HTTPException từ đầu hàm
-            raise http_error # Re-raise để FastAPI xử lý
+        except HTTPException as http_error:
+            raise http_error
         except Exception as e:
             self.logger.error(f"Lỗi khi gọi API OpenAI hoặc xử lý câu trả lời: {e}", exc_info=True)
             error_msg = str(e)
@@ -240,28 +242,23 @@ class RAGPipeline:
             else:
                 raise HTTPException(status_code=503, detail=f"Lỗi dịch vụ AI: {error_msg}")
 
+
 # --- Khởi tạo ứng dụng FastAPI ---
 app = FastAPI(
     title="Population Survey RAG API",
     description="API trả lời câu hỏi về nghiệp vụ điều tra biến động dân số.",
-    version="1.0.0"
+    version="1.1.0"
 )
 
-# --- Cấu hình CORS Middleware --- # <-- THÊM PHẦN NÀY
-origins = [
-    "http://localhost",  # Cho phép từ localhost (nếu bạn test từ trình duyệt cục bộ)
-    "http://localhost:8080", # Ví dụ cổng phát triển frontend/Android emulator
-    "app://*",  # Một số lược đồ có thể được sử dụng bởi ứng dụng di động
-    # "https://your-android-app-origin.com", # THÊM ORIGIN CỤ THỂ CỦA BẠN NẾU CÓ
-    "*" # HOẶC CHO PHÉP TẤT CẢ ORIGINS (dùng thận trọng trong production)
-]
+# --- Cấu hình CORS Middleware ---
+origins = ["*"] # Cho phép tất cả origins để dễ dàng test, CÂN NHẮC GIỚI HẠN TRONG PRODUCTION
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # Danh sách các origin được phép
-    allow_credentials=True, # Cho phép gửi cookie (nếu cần)
-    allow_methods=["*"],    # Cho phép tất cả các phương thức (GET, POST, OPTIONS, etc.)
-    allow_headers=["*"],    # Cho phép tất cả các header
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # --- Middleware log request ---
@@ -269,11 +266,9 @@ app.add_middleware(
 async def log_requests_middleware(request: Request, call_next):
     """Middleware để log thông tin request và response."""
     start_time = time.time()
-    logger = logging.getLogger("api.requests") # Logger riêng cho request logs
+    logger = logging.getLogger("api.requests")
     logger.info(f"Request: {request.method} {request.url.path}")
-
-    response = await call_next(request) # Gọi endpoint function
-
+    response = await call_next(request)
     process_time = time.time() - start_time
     logger.info(f"Response: {response.status_code} (took {process_time:.4f}s)")
     return response
@@ -284,47 +279,26 @@ try:
     logging.info("RAG Pipeline khởi tạo thành công.")
 except RuntimeError as init_error:
     logging.critical(f"KHÔNG THỂ KHỞI ĐỘNG ỨNG DỤNG: Lỗi khởi tạo RAG Pipeline: {init_error}")
-    # Xử lý dừng ứng dụng ở đây nếu cần thiết, ví dụ:
-    # import sys
-    # sys.exit(1) # Dừng ứng dụng với mã lỗi khác 0
-    rag_pipeline = None # Đảm bảo biến rag_pipeline được gán giá trị ngay cả khi lỗi
+    rag_pipeline = None
 
 # --- API Endpoints ---
 @app.post("/answer", response_model=AnswerResponse, summary="Trả lời câu hỏi", description="API endpoint để trả lời câu hỏi về nghiệp vụ điều tra dân số.")
-async def get_api_answer(request: Request): # <-- Tạm thời thay QuestionRequest bằng Request
-    """Endpoint API chính để nhận câu hỏi và trả về câu trả lời."""
-
-    # --- THÊM ĐOẠN LOG NÀY ---
-    try:
-        request_body_bytes = await request.body()
-        request_body_str = request_body_bytes.decode('utf-8')
-        logging.getLogger("api.requests").info(f"RAW Request Body received: {request_body_str}") # Log nội dung thô
-        # Cố gắng parse JSON để xem cấu trúc
-        try:
-            request_data = json.loads(request_body_str)
-            logging.getLogger("api.requests").info(f"Parsed Request Body: {request_data}")
-        except json.JSONDecodeError:
-            logging.getLogger("api.requests").warning("Failed to parse request body as JSON.")
-
-        # Cố gắng validate thủ công (để mô phỏng FastAPI)
-        validated_data = QuestionRequest.parse_raw(request_body_bytes)
-        question_from_request = validated_data.question
-
-    except Exception as parse_error:
-        logging.getLogger("api.requests").error(f"Error processing request body: {parse_error}", exc_info=True)
-        raise HTTPException(status_code=400, detail=f"Invalid request body format or content: {parse_error}")
-    # --- KẾT THÚC ĐOẠN LOG ---
-
-
+async def get_api_answer(request: QuestionRequest): # FastAPI validation dựa trên QuestionRequest
+    """Endpoint API chính để nhận câu hỏi (message) và trả về câu trả lời."""
     if rag_pipeline is None:
         raise HTTPException(status_code=503, detail="Dịch vụ chưa sẵn sàng. RAG Pipeline không khởi tạo được.")
     try:
-        # Sử dụng dữ liệu đã validate thủ công
-        answer = rag_pipeline.get_answer(question_from_request)
+        message_content = request.message # Lấy message từ request đã được validate
+        answer = rag_pipeline.get_answer(message_content) # Truyền message vào pipeline
         return AnswerResponse(answer=answer)
     except HTTPException as e:
-        rag_pipeline.logger.warning(f"Lỗi API xử lý '{question_from_request[:50]}...': {e.status_code} - {e.detail}")
+        rag_pipeline.logger.warning(f"Lỗi API xử lý '{request.message[:50]}...': {e.status_code} - {e.detail}")
         raise e
     except Exception as e:
         rag_pipeline.logger.error(f"Lỗi không xác định tại endpoint /answer: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Lỗi máy chủ không xác định: {str(e)}")
+
+@app.get("/health", summary="Kiểm tra trạng thái dịch vụ")
+async def health_check():
+    """Endpoint kiểm tra sức khỏe của API."""
+    return {"status": "ok"}

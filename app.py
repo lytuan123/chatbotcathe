@@ -291,24 +291,40 @@ except RuntimeError as init_error:
 
 # --- API Endpoints ---
 @app.post("/answer", response_model=AnswerResponse, summary="Trả lời câu hỏi", description="API endpoint để trả lời câu hỏi về nghiệp vụ điều tra dân số.")
-async def get_api_answer(request: QuestionRequest):
+async def get_api_answer(request: Request): # <-- Tạm thời thay QuestionRequest bằng Request
     """Endpoint API chính để nhận câu hỏi và trả về câu trả lời."""
-    if rag_pipeline is None: # Kiểm tra lại pipeline đã khởi tạo thành công
+
+    # --- THÊM ĐOẠN LOG NÀY ---
+    try:
+        request_body_bytes = await request.body()
+        request_body_str = request_body_bytes.decode('utf-8')
+        logging.getLogger("api.requests").info(f"RAW Request Body received: {request_body_str}") # Log nội dung thô
+        # Cố gắng parse JSON để xem cấu trúc
+        try:
+            request_data = json.loads(request_body_str)
+            logging.getLogger("api.requests").info(f"Parsed Request Body: {request_data}")
+        except json.JSONDecodeError:
+            logging.getLogger("api.requests").warning("Failed to parse request body as JSON.")
+
+        # Cố gắng validate thủ công (để mô phỏng FastAPI)
+        validated_data = QuestionRequest.parse_raw(request_body_bytes)
+        question_from_request = validated_data.question
+
+    except Exception as parse_error:
+        logging.getLogger("api.requests").error(f"Error processing request body: {parse_error}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Invalid request body format or content: {parse_error}")
+    # --- KẾT THÚC ĐOẠN LOG ---
+
+
+    if rag_pipeline is None:
         raise HTTPException(status_code=503, detail="Dịch vụ chưa sẵn sàng. RAG Pipeline không khởi tạo được.")
     try:
-        answer = rag_pipeline.get_answer(request.question)
+        # Sử dụng dữ liệu đã validate thủ công
+        answer = rag_pipeline.get_answer(question_from_request)
         return AnswerResponse(answer=answer)
     except HTTPException as e:
-        rag_pipeline.logger.warning(f"Lỗi API xử lý '{request.question[:50]}...': {e.status_code} - {e.detail}")
-        raise e # Re-raise HTTPException để FastAPI xử lý response lỗi
+        rag_pipeline.logger.warning(f"Lỗi API xử lý '{question_from_request[:50]}...': {e.status_code} - {e.detail}")
+        raise e
     except Exception as e:
         rag_pipeline.logger.error(f"Lỗi không xác định tại endpoint /answer: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Lỗi máy chủ không xác định: {str(e)}")
-
-@app.get("/health", summary="Kiểm tra trạng thái dịch vụ")
-async def health_check():
-    """Endpoint kiểm tra sức khỏe của API."""
-    return {"status": "ok"}
-
-# --- Lưu ý: Không cần if __name__ == "__main__": khi chạy với Uvicorn.
-# Uvicorn sẽ import `app` từ file `app.py` và chạy nó.

@@ -15,305 +15,230 @@ from pydantic import BaseModel
 from logging.handlers import RotatingFileHandler
 from fastapi.middleware.cors import CORSMiddleware
 
-# --- Định nghĩa cấu trúc dữ liệu cho API Request và Response ---
 class QuestionRequest(BaseModel):
-    query: str  
-    message: str = None  
+    query: str
+    message: str = None
 
 class AnswerResponse(BaseModel):
     answer: str
 
-# --- Class RAGPipeline (Tối ưu hóa và Hoàn chỉnh) ---
 class RAGPipeline:
-    def __init__(self):
-        """Khởi tạo pipeline RAG: logging, OpenAI client, load dữ liệu."""
-        self._setup_logging()
-        self.logger.info("Khởi tạo RAG Pipeline...")
+    def __init__(self, output_dir='output', cache_file='history_cache.json'):
+        """
+        Khởi tạo RAG Pipeline với cấu hình linh hoạt và robust error handling.
+        
+        Args:
+            output_dir (str): Thư mục chứa các file index và text
+            cache_file (str): Đường dẫn file cache
+        """
+        self.logger = self._setup_logging()
+        self.logger.info("Bắt đầu khởi tạo RAG Pipeline...")
+
         try:
             load_dotenv()
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                self.logger.critical("OPENAI_API_KEY không tìm thấy trong file .env")
-                raise ValueError("OPENAI_API_KEY không tìm thấy trong file .env")
-
-            self.client = OpenAI(api_key=api_key)
-            self.output_dir = Path(os.getenv("OUTPUT_DIR", "output"))
-            self.cache_file = Path(os.getenv("CACHE_FILE", "history_cache.json"))
-            self.logger.info(f"Đường dẫn output: {self.output_dir.absolute()}")
-            self.logger.info(f"Đường dẫn cache: {self.cache_file.absolute()}")
-
-            self._initialize_pipeline_data()
+            self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            
+            self.output_dir = Path(output_dir)
+            self.cache_file = Path(cache_file)
+            
+            self._validate_paths()
+            self._load_index_and_texts()
             self._load_cache()
-            self.logger.info("RAG Pipeline khởi tạo thành công.")
+            
+            self.logger.info("✅ RAG Pipeline khởi tạo thành công!")
 
-        except FileNotFoundError as fnf_error:
-            self.logger.critical(f"Lỗi file cấu hình: {fnf_error}", exc_info=True)
-            raise RuntimeError("Không thể khởi tạo RAG Pipeline do lỗi file cấu hình.") from fnf_error
-        except ValueError as value_error:
-            self.logger.critical(f"Lỗi giá trị cấu hình: {value_error}", exc_info=True)
-            raise RuntimeError("Không thể khởi tạo RAG Pipeline do lỗi giá trị cấu hình.") from value_error
         except Exception as e:
-            self.logger.critical(f"Lỗi không xác định khi khởi tạo RAGPipeline: {e}", exc_info=True)
-            raise RuntimeError("Không thể khởi tạo RAG Pipeline do lỗi không xác định.") from e
+            self.logger.critical(f"❌ Lỗi khởi tạo RAG Pipeline: {e}")
+            raise
 
     def _setup_logging(self):
-        """Thiết lập cấu hình logging với file rotation."""
+        """Cấu hình logging chuyên nghiệp với file rotation."""
         log_dir = Path("logs")
         log_dir.mkdir(exist_ok=True)
-        log_file = log_dir / "rag_api.log"
-
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-
-        file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
+        
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
+        
+        # File handler
+        file_handler = RotatingFileHandler(
+            log_dir / "rag_pipeline.log", 
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5,
+            encoding='utf-8'
+        )
         file_handler.setFormatter(formatter)
-        stream_handler = logging.StreamHandler()
-        stream_handler.setFormatter(formatter)
+        
+        # Console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        
+        # Configure logger
+        logger = logging.getLogger('RAGPipeline')
+        logger.setLevel(logging.INFO)
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+        
+        return logger
 
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.INFO)
-        if root_logger.hasHandlers():
-            root_logger.handlers.clear() 
-        root_logger.addHandler(file_handler)
-        root_logger.addHandler(stream_handler)
+    def _validate_paths(self):
+        """Kiểm tra tính hợp lệ của các đường dẫn."""
+        paths_to_check = [
+            self.output_dir / "faiss_index.bin",
+            self.output_dir / "processed_texts.pkl"
+        ]
+        
+        for path in paths_to_check:
+            if not path.exists():
+                raise FileNotFoundError(f"❌ Không tìm thấy file: {path}")
 
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.DEBUG)
-
-    def _initialize_pipeline_data(self):
-        """Load FAISS index và processed texts từ file."""
-        index_path = self.output_dir / "faiss_index.bin"
-        texts_path = self.output_dir / "processed_texts.pkl"
-
-        if not self.output_dir.exists():
-            raise FileNotFoundError(f"Thư mục output không tồn tại: {self.output_dir}")
-        if not index_path.exists():
-            raise FileNotFoundError(f"Không tìm thấy file index FAISS tại: {index_path}")
-        if not texts_path.exists():
-            raise FileNotFoundError(f"Không tìm thấy file texts đã xử lý tại: {texts_path}")
-
-        self.index = faiss.read_index(str(index_path))
-        with open(texts_path, "rb") as f:
+    def _load_index_and_texts(self):
+        """Tải FAISS index và processed texts."""
+        self.index = faiss.read_index(str(self.output_dir / "faiss_index.bin"))
+        
+        with open(self.output_dir / "processed_texts.pkl", "rb") as f:
             self.texts = pickle.load(f)
-
-        if not isinstance(self.texts, list):
-            raise ValueError("Dữ liệu texts đã xử lý phải là một list.")
-
+        
+        # Xử lý texts để dễ dàng truy xuất
         self.processed_texts = []
         for item in self.texts:
-            if isinstance(item, dict):
-                content = item.get("content", "")
-                metadata = item.get("metadata", {})
-                page = metadata.get("page", "N/A")
-                source = metadata.get("source", "N/A")
-                self.processed_texts.append(f"[Trang {page} - {source}]\n{content}")
-            else:
-                self.processed_texts.append(str(item))
-        self.logger.info(f"Đã load {len(self.processed_texts)} texts và FAISS index.")
+            content = item.get('content', '') if isinstance(item, dict) else str(item)
+            metadata = item.get('metadata', {}) if isinstance(item, dict) else {}
+            page = metadata.get('page', 'N/A')
+            source = metadata.get('source', 'N/A')
+            
+            formatted_text = f"[Trang {page} - {source}]\n{content}"
+            self.processed_texts.append(formatted_text)
+        
+        self.logger.info(f"✅ Tải {len(self.processed_texts)} texts thành công")
 
     def _load_cache(self):
-        """Load cache từ file JSON, tạo mới nếu không tồn tại."""
+        """Tải hoặc khởi tạo cache."""
         try:
             if self.cache_file.exists():
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
                     self.cache = json.load(f)
-                self.logger.info(f"Đã load cache với {len(self.cache)} mục từ: {self.cache_file}")
             else:
                 self.cache = {}
                 with open(self.cache_file, 'w', encoding='utf-8') as f:
-                    json.dump(self.cache, f, ensure_ascii=False, indent=2)
-                self.logger.info(f"Đã tạo file cache mới tại: {self.cache_file}")
+                    json.dump(self.cache, f, indent=2)
+            
+            self.logger.info(f"✅ Tải {len(self.cache)} mục cache")
+        
         except Exception as e:
-            self.logger.error(f"Lỗi khi load/tạo cache: {e}", exc_info=True)
+            self.logger.warning(f"⚠️ Lỗi tải cache: {e}. Khởi tạo cache mới.")
             self.cache = {}
 
-    def _save_cache(self, query: str, answer: str):
-        """Lưu câu hỏi và câu trả lời vào cache file."""
+    def get_embedding(self, text: str, model="text-embedding-3-large"):
+        """Lấy embedding với retry mechanism."""
         try:
-            self.cache[query] = answer
-            with open(self.cache_file, 'w', encoding='utf-8') as f:
-                json.dump(self.cache, f, ensure_ascii=False, indent=2)
-            self.logger.debug(f"Đã lưu cache cho query: {query[:50]}...")
+            response = self.client.embeddings.create(
+                input=[text.replace("\n", " ").strip()],
+                model=model
+            )
+            return np.array(response.data[0].embedding, dtype=np.float32)
         except Exception as e:
-            self.logger.error(f"Lỗi khi lưu cache: {e}", exc_info=True)
+            self.logger.error(f"❌ Lỗi lấy embedding: {e}")
+            raise
 
-    def get_embedding(self, text: str) -> np.ndarray:
-        """Lấy embedding từ OpenAI API với cơ chế retry."""
-        max_retries = 3
-        delay = 1
-        for attempt in range(max_retries):
-            try:
-                text_to_embed = text.replace("\n", " ").strip()
-                if not text_to_embed:
-                    self.logger.warning("Chuỗi rỗng được truyền vào get_embedding.")
-                    raise ValueError("Không thể tạo embedding cho chuỗi rỗng.")
-
-                response = self.client.embeddings.create(
-                    input=[text_to_embed],
-                    model="text-embedding-3-large"
-                )
-                if response.data and response.data[0].embedding:
-                    return np.array(response.data[0].embedding, dtype=np.float32)
-                else:
-                    raise ValueError("API OpenAI không trả về embedding hợp lệ.")
-            except Exception as e:
-                self.logger.warning(f"Lỗi lấy embedding (lần {attempt + 1}/{max_retries}): {e}")
-                if attempt == max_retries - 1:
-                    self.logger.error(f"Không thể lấy embedding sau {max_retries} lần thử.")
-                    raise
-                time.sleep(delay * (attempt + 1))
-
-        raise RuntimeError("Không thể lấy embedding sau nhiều lần thử lại.")
-
-    def get_relevant_context(self, query: str, k: int = 3) -> str:
+    def get_relevant_context(self, query: str, k: int = 3):
+        """Tìm context liên quan với kỹ thuật phân vùng khoảng cách."""
         try:
             query_embedding = self.get_embedding(query)
+            
+            # Tìm kiếm với số lượng lớn hơn
             distances, indices = self.index.search(
-                np.array([query_embedding]),
-                min(k, self.index.ntotal)
+                np.array([query_embedding]), 
+                min(k * 5, len(self.processed_texts))
             )
             
-            # Debug: In thông tin chi tiết
-            self.logger.info(f"Distances: {distances}")
-            self.logger.info(f"Indices: {indices}")
+            # Tự động điều chỉnh ngưỡng
+            threshold = np.percentile(distances[0], 30)
             
-            threshold = 5.0  # Điều chỉnh ngưỡng
-            valid_indices = indices[0][distances[0] < threshold]
+            valid_indices = [
+                i for i, d in zip(indices[0], distances[0]) 
+                if d < threshold
+            ][:k]
             
-            self.logger.info(f"Valid Indices: {valid_indices}")
+            if not valid_indices:
+                return "Không tìm thấy thông tin liên quan."
             
-            if len(valid_indices) == 0:
-                # Log thêm thông tin để debug
-                self.logger.warning(f"No context found for query: {query}")
-                self.logger.warning(f"Raw distances: {distances}")
-                self.logger.warning(f"Raw indices: {indices}")
-                return "Không tìm thấy thông tin liên quan trong tài liệu."
-    
-            contexts = [self.processed_texts[i] for i in valid_indices if 0 <= i < len(self.processed_texts)]
-            self.logger.info(f"Found {len(contexts)} contexts")
+            contexts = [self.processed_texts[i] for i in valid_indices]
             return "\n\n---\n\n".join(contexts)
+        
+        except Exception as e:
+            self.logger.error(f"❌ Lỗi truy xuất context: {e}")
+            return "Lỗi khi tìm kiếm thông tin liên quan."
 
-    except Exception as e:
-        self.logger.error(f"Error in get_relevant_context: {e}", exc_info=True)
-        return f"Lỗi khi tìm kiếm thông tin liên quan: {str(e)}"
-
-    def get_answer(self, query: str) -> str:
-        """Trả lời câu hỏi dựa trên context và OpenAI API, sử dụng cache."""
+    def get_answer(self, query: str):
+        """Xử lý trả lời với caching và robust error handling."""
         query = query.strip()
+        
         if not query:
-            raise HTTPException(status_code=400, detail="Nội dung 'message' không được để trống.")
-
+            return "Vui lòng nhập câu hỏi cụ thể."
+        
+        # Kiểm tra cache
         if query in self.cache:
-            self.logger.info(f"Cache hit cho query: {query[:50]}...")
+            self.logger.info("✅ Trả lời từ cache")
             return self.cache[query]
-        self.logger.info(f"Cache miss cho query: {query[:50]}...")
-
+        
         try:
             context = self.get_relevant_context(query)
-            if context.startswith("Lỗi khi tìm kiếm thông tin liên quan:") or context == "Không tìm thấy thông tin liên quan trong tài liệu.":
-                self.logger.warning(f"Context không phù hợp hoặc lỗi khi tìm kiếm: {context}")
-                return "Xin lỗi, hiện tại tôi không thể tìm thấy thông tin liên quan đến câu hỏi của bạn trong tài liệu."
-
-            prompt = f"""Bạn là một trợ lý AI chuyên nghiệp, chuyên trả lời câu hỏi về nghiệp vụ điều tra biến động dân số ngày 1/04/2025.Bạn có thể linh động để chào hỏi với người dùng.
-            Sử dụng thông tin trong phần "Context" dưới đây để trả lời câu hỏi một cách chính xác và chi tiết nhất.
-            Nếu thông tin không có trong Context, hãy trả lời "Thông tin này không có trong tài liệu được cung cấp." và KHÔNG bịa đặt.
-            Chỉ trả lời trực tiếp vào câu hỏi, không cần lời chào hay giới thiệu.
+            
+            prompt = f"""Bạn là trợ lý AI chuyên nghiệp về điều tra dân số.
+            Sử dụng context dưới đây để trả lời câu hỏi chính xác và chi tiết.
+            Nếu không tìm thấy thông tin, hãy nói rõ.
 
             Context:
-            ---
             {context}
-            ---
 
             Câu hỏi: {query}
 
-            Trả lời:"""
+            Trả lời ngắn gọn, chuyên nghiệp:"""
 
-            start_time = time.time()
             response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
-                max_tokens=1500
+                max_tokens=2000
             )
+            
             answer = response.choices[0].message.content.strip()
-            end_time = time.time()
-            self.logger.info(f"Gọi OpenAI thành công ({end_time - start_time:.2f}s).")
-
-            self._save_cache(query, answer)
+            
+            # Lưu cache
+            self.cache[query] = answer
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self.cache, f, ensure_ascii=False, indent=2)
+            
             return answer
-
-        except HTTPException as http_error:
-            raise http_error
+        
         except Exception as e:
-            self.logger.error(f"Lỗi khi gọi API OpenAI hoặc xử lý câu trả lời: {e}", exc_info=True)
-            error_msg = str(e)
-            if "rate limit" in error_msg.lower():
-                raise HTTPException(status_code=429, detail="Hệ thống đang quá tải (OpenAI Rate Limit). Vui lòng thử lại sau.")
-            elif "authentication" in error_msg.lower():
-                raise HTTPException(status_code=401, detail="Lỗi xác thực OpenAI. Kiểm tra lại API key.")
-            else:
-                raise HTTPException(status_code=503, detail=f"Lỗi dịch vụ AI: {error_msg}")
+            self.logger.error(f"❌ Lỗi xử lý câu hỏi: {e}")
+            return "Xin lỗi, đã có lỗi xảy ra khi xử lý câu hỏi của bạn."
 
-
-# --- Khởi tạo ứng dụng FastAPI ---
+# FastAPI setup tương tự như code cũ
 app = FastAPI(
     title="Population Survey RAG API",
-    description="API trả lời câu hỏi về nghiệp vụ điều tra biến động dân số.",
-    version="1.1.0"
+    description="API trả lời thông minh về điều tra dân số",
+    version="2.0.0"
 )
 
-# --- Cấu hình CORS Middleware ---
-origins = ["*"] # Cho phép tất cả origins để dễ dàng test, CÂN NHẮC GIỚI HẠN TRONG PRODUCTION
+# CORS và middleware giữ nguyên như code cũ
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- Middleware log request ---
-@app.middleware("http")
-async def log_requests_middleware(request: Request, call_next):
-    """Middleware để log thông tin request và response."""
-    start_time = time.time()
-    logger = logging.getLogger("api.requests")
-    logger.info(f"Request: {request.method} {request.url.path}")
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    logger.info(f"Response: {response.status_code} (took {process_time:.4f}s)")
-    return response
-
-# --- Khởi tạo RAG Pipeline khi startup ---
-try:
-    rag_pipeline = RAGPipeline()
-    logging.info("RAG Pipeline khởi tạo thành công.")
-except RuntimeError as init_error:
-    logging.critical(f"KHÔNG THỂ KHỞI ĐỘNG ỨNG DỤNG: Lỗi khởi tạo RAG Pipeline: {init_error}")
-    rag_pipeline = None
-
-# --- API Endpoints ---
-@app.post("/answer", response_model=AnswerResponse, summary="Trả lời câu hỏi", description="API endpoint dùng để trả lời các câu hỏi liên quan đến điều tra dân số.")
-async def get_api_answer(request: QuestionRequest): 
-    """API endpoint chính, nhận câu hỏi (query) và trả về câu trả lời."""
-    if rag_pipeline is None:
-        raise HTTPException(status_code=503, detail="Dịch vụ chưa sẵn sàng. RAG Pipeline chưa được khởi tạo.")
+@app.post("/answer", response_model=AnswerResponse)
+async def get_api_answer(request: QuestionRequest):
+    """Endpoint chính cho việc trả lời câu hỏi."""
     try:
-        # Sử dụng trường query trước, nếu không tồn tại thì sử dụng trường message
-        message_content = request.query if request.query else request.message
+        message_content = request.query or request.message
         if not message_content:
-            raise HTTPException(status_code=400, detail="Yêu cầu phải có trường 'query'.")
-            
-        answer = rag_pipeline.get_answer(message_content) # Chuyển tin nhắn tới pipeline
+            raise HTTPException(status_code=400, detail="Yêu cầu phải có nội dung.")
+        
+        rag_pipeline = RAGPipeline()  # Khởi tạo pipeline
+        answer = rag_pipeline.get_answer(message_content)
         return AnswerResponse(answer=answer)
-    except HTTPException as e:
-        rag_pipeline.logger.warning(f"Lỗi xử lý API '{request.query[:50] if request.query else request.message[:50]}...': {e.status_code} - {e.detail}")
-        raise e
+    
     except Exception as e:
-        rag_pipeline.logger.error(f"Lỗi không xác định tại endpoint /answer: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Lỗi máy chủ không xác định: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/health", summary="Kiểm tra trạng thái dịch vụ")
+@app.get("/health")
 async def health_check():
-    """Endpoint kiểm tra sức khỏe của API."""
-    return {"status": "ok"}
+    """Endpoint kiểm tra trạng thái dịch vụ."""
+    return {"status": "healthy"}

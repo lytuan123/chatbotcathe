@@ -139,34 +139,30 @@ class RAGPipeline:
             self.logger.error(f"❌ Lỗi lấy embedding: {e}")
             raise
 
-    def get_relevant_context(self, query: str, k: int = 3):
-        """Tìm context liên quan với kỹ thuật phân vùng khoảng cách."""
+    def get_relevant_context(self, query: str, k: int = 3) -> str:
+        """Tìm context liên quan từ FAISS với ngưỡng similarity."""
         try:
             query_embedding = self.get_embedding(query)
-            
-            # Tìm kiếm với số lượng lớn hơn
+
+            # Batch search trong FAISS
             distances, indices = self.index.search(
-                np.array([query_embedding]), 
-                min(k * 5, len(self.processed_texts))
+                np.array([query_embedding]),
+                min(k, len(self.processed_texts))
             )
-            
-            # Tự động điều chỉnh ngưỡng
-            threshold = np.percentile(distances[0], 30)
-            
-            valid_indices = [
-                i for i, d in zip(indices[0], distances[0]) 
-                if d < threshold
-            ][:k]
-            
+
+            # Lọc kết quả với ngưỡng similarity
+            threshold = 0.7
+            valid_indices = [i for i, d in zip(indices[0], distances[0]) if d < threshold]
+
             if not valid_indices:
-                return "Không tìm thấy thông tin liên quan."
-            
+                return "Không tìm thấy context phù hợp."
+
             contexts = [self.processed_texts[i] for i in valid_indices]
             return "\n\n---\n\n".join(contexts)
-        
+
         except Exception as e:
-            self.logger.error(f"❌ Lỗi truy xuất context: {e}")
-            return "Lỗi khi tìm kiếm thông tin liên quan."
+            self.logger.error("Lỗi trong get_relevant_context", exc_info=True)
+            raise
 
     def get_answer(self, query: str):
         """Xử lý trả lời với caching và robust error handling."""
@@ -183,7 +179,8 @@ class RAGPipeline:
         try:
             context = self.get_relevant_context(query)
             
-            prompt = f"""Bạn là trợ lý AI chuyên nghiệp về điều tra dân số.
+            prompt = f"""Bạn là trợ lý AI chuyên nghiệp về điều tra biến động dân số 1/4/2025.
+            Bạn cũng có thể giao tiếp chào hỏi với người dùng.
             Sử dụng context dưới đây để trả lời câu hỏi chính xác và chi tiết.
             Nếu không tìm thấy thông tin, hãy nói rõ.
 

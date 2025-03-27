@@ -194,7 +194,7 @@ class RAGPipeline:
             response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
+                temperature=0.3,
                 max_tokens=2000
             )
             

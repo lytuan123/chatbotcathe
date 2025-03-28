@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from logging.handlers import RotatingFileHandler
 from fastapi.middleware.cors import CORSMiddleware
+import hashlib
 
 # Định nghĩa request/response models (giữ nguyên)
 class QuestionRequest(BaseModel):
@@ -108,20 +109,39 @@ class RAGPipeline:
         return chunks
 
     def _load_cache(self):
-        """Tải hoặc khởi tạo cache với chiến lược nâng cao"""
+        """Tải hoặc khởi tạo cache với xử lý lỗi an toàn"""
         try:
             if self.cache_file.exists():
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
-                    self.cache = json.load(f)
+                    loaded_cache = json.load(f)
                     
-                # Tự động làm mới cache sau 1 tuần
-                current_time = time.time()
-                for key in list(self.cache.keys()):
-                    if current_time - self.cache[key].get('timestamp', 0) > 7 * 24 * 3600:
-                        del self.cache[key]
+                # Kiểm tra và chuyển đổi cấu trúc cache nếu cần
+                if not isinstance(loaded_cache, dict):
+                    self.logger.warning("Cấu trúc cache không hợp lệ. Khởi tạo cache mới.")
+                    self.cache = {}
+                else:
+                    # Chuyển đổi cache cũ sang cấu trúc mới nếu cần
+                    self.cache = {}
+                    for key, value in loaded_cache.items():
+                        # Nếu value không phải dict, thêm timestamp
+                        if not isinstance(value, dict):
+                            self.cache[key] = {
+                                'answer': value,
+                                'timestamp': time.time()
+                            }
+                        else:
+                            self.cache[key] = value
             else:
                 self.cache = {}
             
+            # Làm mới cache, loại bỏ các mục cũ
+            current_time = time.time()
+            self.cache = {
+                k: v for k, v in self.cache.items() 
+                if current_time - v.get('timestamp', current_time) < 7 * 24 * 3600
+            }
+            
+            # Lưu lại cache đã được làm sạch
             with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
             
@@ -130,6 +150,10 @@ class RAGPipeline:
         except Exception as e:
             self.logger.warning(f"⚠️ Lỗi tải cache: {e}. Khởi tạo cache mới.")
             self.cache = {}
+            
+            # Tạo file cache trống nếu chưa tồn tại
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self.cache, f, ensure_ascii=False, indent=2)
 
     def get_embedding(self, text: str, model="text-embedding-3-large"):  
         """Lấy embedding với retry mechanism."""
@@ -174,26 +198,25 @@ class RAGPipeline:
             raise
 
     def get_answer(self, query: str):
-        context = self.get_relevant_context(query)
-        cache_key = hashlib.md5(f"{query}||{context}".encode()).hexdigest()
-        
-        if cache_key in self.cache:
-            return self.cache[cache_key]['answer']
-        """Xử lý trả lời với ngữ cảnh hội thoại thông minh."""
+        """Xử lý trả lời với ngữ cảnh hội thoại thông minh và cache nâng cao"""
         query = query.strip()
         if not query:
             return "Vui lòng nhập câu hỏi cụ thể."
-
-        # Kiểm tra cache với lịch sử gần nhất
-        cache_key = f"{query}||{json.dumps(self.conversation_history[-3:])}"
-        if cache_key in self.cache:
-            self.logger.info("✅ Trả lời từ cache")
-            return self.cache[cache_key]
-
+    
         try:
             # Lấy context từ FAISS
             context = self.get_relevant_context(query)
-
+    
+            # Tạo cache key từ query và context
+            cache_key = hashlib.md5(f"{query}||{context}".encode()).hexdigest()
+            
+            # Kiểm tra cache
+            if cache_key in self.cache:
+                # Kiểm tra thời gian cache
+                current_time = time.time()
+                if current_time - self.cache[cache_key].get('timestamp', 0) < 7 * 24 * 3600:
+                    self.logger.info("✅ Trả lời từ cache")
+                    return self.cache[cache_key]['answer']
             # Prompt thông minh, yêu cầu GPT-4o tự liên kết ngữ cảnh
             system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số 1/05/2024 tại Việt Nam. 
 
@@ -242,13 +265,16 @@ class RAGPipeline:
             if len(self.conversation_history) > self.max_history * 3:
                 self.conversation_history = self.conversation_history[-self.max_history * 3:]
 
-            # Lưu cache
-            self.cache[cache_key] = answer
+            # Lưu cache với timestamp
+            self.cache[cache_key] = {
+                'answer': answer,
+                'timestamp': time.time()
+            }
             with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
-
+    
             return answer
-
+    
         except Exception as e:
             self.logger.error(f"❌ Lỗi xử lý câu hỏi: {e}")
             return "Xin lỗi, đã có lỗi xảy ra."

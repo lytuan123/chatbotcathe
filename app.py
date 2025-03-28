@@ -228,7 +228,7 @@ class RAGPipeline:
 
             # Gọi GPT-4o
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="o3-mini",
                 messages=messages,
                 temperature=0.3,
                 max_tokens=1500
@@ -262,45 +262,57 @@ class RAGPipeline:
         faiss.write_index(self.index, str(self.output_dir / "faiss_index.bin"))
         self.logger.info("✅ Đã tái tạo FAISS index thành công")
 
-# FastAPI setup (giữ nguyên logic request body)
+# Thiết lập FastAPI app và CORS middleware
 app = FastAPI(
     title="Population Survey RAG API",
     description="API trả lời thông minh về điều tra dân số",
     version="2.0.0"
 )
 
+# Cấu hình CORS để hỗ trợ cả website và ứng dụng Android
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://aiwiki.vn"],
+    allow_origins=["https://aiwiki.vn", "*"],  # Cho phép aiwiki.vn và tất cả origins cho Android
     allow_credentials=True,
-    allow_methods=["POST", "OPTIONS"],
+    allow_methods=["POST", "GET", "OPTIONS"],  # Cho phép các phương thức cần thiết
     allow_headers=["Content-Type", "Accept"],
 )
 
-@app.middleware("http")
-async def log_requests_middleware(request: Request, call_next):
-    """Middleware log request."""
-    start_time = time.time()
-    logger = logging.getLogger("api.requests")
-    logger.info(f"Request: {request.method} {request.url.path}")
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    logger.info(f"Response: {response.status_code} (took {process_time:.4f}s)")
-    return response
+# Khởi tạo RAGPipeline một lần duy nhất khi server khởi động
+try:
+    rag_pipeline = RAGPipeline()
+    logging.info("Khởi tạo RAGPipeline thành công")
+except Exception as e:
+    logging.critical(f"Lỗi khởi tạo RAGPipeline: {e}")
+    rag_pipeline = None
+
+@app.get("/")
+async def root():
+    """Endpoint gốc để kiểm tra trạng thái server."""
+    return {"message": "API điều tra dân số đang hoạt động. Sử dụng /answer để đặt câu hỏi."}
 
 @app.post("/answer", response_model=AnswerResponse)
 async def get_api_answer(request: QuestionRequest):
-    """Endpoint trả lời câu hỏi."""
+    """Endpoint chính cho việc trả lời câu hỏi."""
     try:
+        # Lấy nội dung từ request - tương thích với cả query của Android
         message_content = request.query or request.message
         if not message_content:
             raise HTTPException(status_code=400, detail="Yêu cầu phải có nội dung.")
         
-        rag_pipeline = RAGPipeline()  # Khởi tạo pipeline
+        # Sử dụng RAGPipeline đã được khởi tạo từ trước
+        global rag_pipeline
+        if rag_pipeline is None:
+            try:
+                rag_pipeline = RAGPipeline()
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Không thể khởi tạo RAGPipeline: {str(e)}")
+        
         answer = rag_pipeline.get_answer(message_content)
         return AnswerResponse(answer=answer)
     
     except Exception as e:
+        logging.error(f"Lỗi xử lý câu hỏi: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")

@@ -188,6 +188,9 @@ class RAGPipeline:
             contexts = [self.processed_texts[i] for i in valid_indices]
             return "\n\n---\n\n".join(contexts)
 
+        except Exception as e:
+            self.logger.error("Lỗi trong get_relevant_context", exc_info=True)
+            raise
 
     def get_answer(self, query: str):
         query = query.strip()
@@ -208,8 +211,7 @@ class RAGPipeline:
             Dựa trên context và lịch sử hội thoại (nếu có), trả lời câu hỏi một cách chính xác và chi tiết. 
             Nếu câu hỏi liên quan đến các câu trước, tự động liên kết ngữ cảnh. 
             Nếu context không đủ thông tin, hãy nói rõ và suy luận hợp lý nếu phù hợp
-            Lưu ý quan trọng: 1 :Tính minh bạch và chính xác là ưu tiên hàng đầu!
-                              2 : Thay vì dùng từ "context", hãy sử dụng từ "nghiệp vụ điều tra " để chuyên nghiệp hơn."""
+            Lưu ý quan trọng:Thay vì dùng từ "context", hãy sử dụng từ "nghiệp vụ điều tra " để chuyên nghiệp hơn."""
             
             messages = [{"role": "system", "content": system_prompt}]
             # Chỉ thêm lịch sử nếu câu hỏi có vẻ nối tiếp

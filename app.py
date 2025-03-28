@@ -155,14 +155,14 @@ class RAGPipeline:
             with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
 
-    def get_embedding(self, text: str) -> np.ndarray:
+    def get_embedding(self, text: str, model="text-embedding-3-large") -> np.ndarray:
         """Lấy embedding với retry logic"""
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = self.client.embeddings.create(
                     input=text,
-                    model="text-embedding-3-large"
+                    model=model
                 )
                 return np.array(response.data[0].embedding, dtype=np.float32)
             except Exception as e:
@@ -228,7 +228,7 @@ class RAGPipeline:
 
             # Gọi GPT-4o
             response = self.client.chat.completions.create(
-                model="o3-mini",
+                model="gpt-4o",
                 messages=messages,
                 temperature=0.3,
                 max_tokens=1500

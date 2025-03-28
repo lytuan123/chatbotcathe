@@ -47,7 +47,11 @@ class RAGPipeline:
         self._validate_paths()
         self._load_index_and_texts()
         self._load_cache()
-        
+        sample_embedding = self.get_embedding("test", model="text-embedding-3-large")
+        if self.index.d != len(sample_embedding):
+            self.logger.warning("⚠️ Index không khớp với embedding. Tái tạo index...")
+            self.rebuild_index()
+             
         self.logger.info("✅ RAG Pipeline khởi tạo thành công!")
 
     def _setup_logging(self):
@@ -73,18 +77,16 @@ class RAGPipeline:
                 raise FileNotFoundError(f"❌ Không tìm thấy file: {path}")
 
     def _load_index_and_texts(self):
-        """Tải FAISS index và texts (tối ưu hóa)."""
         self.index = faiss.read_index(str(self.output_dir / "faiss_index.bin"))
         with open(self.output_dir / "processed_texts.pkl", "rb") as f:
             self.texts = pickle.load(f)
-        
         self.processed_texts = []
         for item in self.texts:
-            content = item.get('content', '')[:500] if isinstance(item, dict) else str(item)[:500]  # Giới hạn độ dài
-            metadata = item.get('metadata', {}) if isinstance(item, dict) else {}
+            content = item.get('content', '')[:2000]  # Tăng giới hạn
+            metadata = item.get('metadata', {})
             page = metadata.get('page', 'N/A')
             source = metadata.get('source', 'N/A')
-            self.processed_texts.append(f"[Trang {page} - {source}]\n{content}")
+            self.processed_texts.append(f"[Trang {page} - {source}]\n{content}"
         
         self.logger.info(f"✅ Tải {len(self.processed_texts)} texts thành công")
 
@@ -115,73 +117,85 @@ class RAGPipeline:
             self.logger.error(f"❌ Lỗi lấy embedding: {e}")
             raise
 
-    def get_relevant_context(self, query: str, k: int = 2) -> str:  # Giảm k để tối ưu
+    def get_relevant_context(self, query: str, k: int = 3) -> str: 
         """Tìm context liên quan với ngưỡng chặt hơn."""
         try:
             query_embedding = self.get_embedding(query)
             distances, indices = self.index.search(np.array([query_embedding]), min(k, len(self.processed_texts)))
-            threshold = 0.5  # Ngưỡng chặt hơn
+            threshold = 0.7  
             valid_indices = [i for i, d in zip(indices[0], distances[0]) if d < threshold]
             if not valid_indices:
                 return "Không tìm thấy thông tin phù hợp."
             contexts = [self.processed_texts[i] for i in valid_indices]
-            return "\n".join(contexts)  # Giảm ký tự phân cách
+            return "\n".join(contexts)
         except Exception as e:
             self.logger.error("Lỗi trong get_relevant_context", exc_info=True)
             raise
 
     def get_answer(self, query: str):
-        """Xử lý trả lời với lịch sử hội thoại và tối ưu chi phí."""
+        """Xử lý trả lời với ngữ cảnh hội thoại thông minh."""
         query = query.strip()
         if not query:
             return "Vui lòng nhập câu hỏi cụ thể."
 
-        # Kiểm tra cache
-        cache_key = f"{query}||{json.dumps(self.conversation_history[-2:])}"  # Cache dựa trên query và 2 tin nhắn cuối
+        # Kiểm tra cache với lịch sử gần nhất
+        cache_key = f"{query}||{json.dumps(self.conversation_history[-3:])}"
         if cache_key in self.cache:
             self.logger.info("✅ Trả lời từ cache")
             return self.cache[cache_key]
 
-        # Xử lý câu hỏi nối tiếp
-        if "còn" in query.lower() and self.conversation_history:
-            previous_query = self.conversation_history[-1]["content"]
-            query = f"{previous_query} {query}"
-
         try:
+            # Lấy context từ FAISS
             context = self.get_relevant_context(query)
-            # Prompt ngắn gọn hơn
-            system_prompt = "Bạn là trợ lý AI chuyên về điều tra dân số. Trả lời ngắn gọn, chính xác dựa trên context."
+
+            # Prompt thông minh, yêu cầu GPT-4o tự liên kết ngữ cảnh
+            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số Việt Nam. 
+            Dựa trên context và lịch sử hội thoại dưới đây, trả lời câu hỏi một cách chính xác, chi tiết và logic. 
+            Nếu câu hỏi liên quan đến các câu trước, hãy tự động liên kết ngữ cảnh mà không cần hướng dẫn cụ thể. 
+            Nếu context không đủ thông tin, giải thích lý do và suy luận hợp lý dựa trên kiến thức chung."""
+            
+            # Chuẩn bị messages với toàn bộ lịch sử (giới hạn bởi max_history)
             messages = [
                 {"role": "system", "content": system_prompt},
-                *self.conversation_history[-self.max_history:],  # Chỉ lấy max_history tin nhắn cuối
+                *self.conversation_history[-self.max_history:],  # Lịch sử gần nhất
                 {"role": "user", "content": f"Context: {context}\nCâu hỏi: {query}"}
             ]
 
+            # Gọi GPT-4o
             response = self.client.chat.completions.create(
-                model="gpt-4o",  # Dùng model nhỏ hơn, rẻ hơn
+                model="gpt-4o",
                 messages=messages,
                 temperature=0.3,
-                max_tokens=500  # Giới hạn output
+                max_tokens=1500
             )
-            
             answer = response.choices[0].message.content.strip()
-            
-            # Cập nhật lịch sử
+
+            # Cập nhật lịch sử hội thoại
             self.conversation_history.append({"role": "user", "content": query})
             self.conversation_history.append({"role": "assistant", "content": answer})
-            if len(self.conversation_history) > self.max_history * 2:  # Giới hạn kích thước lịch sử
-                self.conversation_history = self.conversation_history[-self.max_history * 2:]
-            
+            if len(self.conversation_history) > self.max_history * 3:
+                self.conversation_history = self.conversation_history[-self.max_history * 3:]
+
             # Lưu cache
             self.cache[cache_key] = answer
             with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
-            
+
             return answer
-        
+
         except Exception as e:
             self.logger.error(f"❌ Lỗi xử lý câu hỏi: {e}")
             return "Xin lỗi, đã có lỗi xảy ra."
+
+    # Hàm tái tạo index (đảm bảo dùng text-embedding-3-large)
+    def rebuild_index(self):
+        embeddings = [self.get_embedding(text, model="text-embedding-3-large") for text in self.processed_texts]
+        embeddings = np.array(embeddings, dtype=np.float32)
+        dimension = embeddings.shape[1]  # 3072 với text-embedding-3-large
+        self.index = faiss.IndexFlatL2(dimension)
+        self.index.add(embeddings)
+        faiss.write_index(self.index, str(self.output_dir / "faiss_index.bin"))
+        self.logger.info("✅ Đã tái tạo FAISS index thành công")
 
 # FastAPI setup (giữ nguyên logic request body)
 app = FastAPI(

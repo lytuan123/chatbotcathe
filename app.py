@@ -198,45 +198,48 @@ class RAGPipeline:
             raise
 
     def get_answer(self, query: str):
+        """Xử lý trả lời với ngữ cảnh hội thoại thông minh."""
         query = query.strip()
         if not query:
             return "Vui lòng nhập câu hỏi cụ thể."
 
-        # Kiểm tra cache
-        cache_key = f"{query}||{json.dumps(self.conversation_history[-2:] if self.conversation_history else [])}"
+        # Kiểm tra cache với lịch sử gần nhất
+        cache_key = f"{query}||{json.dumps(self.conversation_history[-3:])}"
         if cache_key in self.cache:
             self.logger.info("✅ Trả lời từ cache")
             return self.cache[cache_key]
 
         try:
+            # Lấy context từ FAISS
             context = self.get_relevant_context(query)
-            
-            # Prompt kết hợp: chi tiết như bản cũ, linh hoạt như bản mới
-            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số Việt Nam. 
-            Dựa trên context và lịch sử hội thoại (nếu có), trả lời câu hỏi một cách chính xác và chi tiết. 
-            Nếu câu hỏi liên quan đến các câu trước, tự động liên kết ngữ cảnh. 
-            Nếu context không đủ thông tin, hãy nói rõ và suy luận hợp lý nếu phù hợp
-            Lưu ý quan trọng:Thay vì dùng từ "context", hãy sử dụng từ "nghiệp vụ điều tra " để chuyên nghiệp hơn."""
-            
-            messages = [{"role": "system", "content": system_prompt}]
-            # Chỉ thêm lịch sử nếu câu hỏi có vẻ nối tiếp
-            if self.conversation_history and any(word in query.lower() for word in ["còn", "thế", "vậy", "lý do", "tại sao"]):
-                messages.extend(self.conversation_history[-3:])  # Giới hạn 3 tin nhắn gần nhất
-            messages.append({"role": "user", "content": f"Context: {context}\nCâu hỏi: {query}"})
 
+            # Prompt thông minh, yêu cầu GPT-4o tự liên kết ngữ cảnh
+            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số Việt Nam. 
+            Dựa trên context và lịch sử hội thoại dưới đây, trả lời câu hỏi một cách chính xác, chi tiết và logic. 
+            Nếu câu hỏi liên quan đến các câu trước, hãy tự động liên kết ngữ cảnh mà không cần hướng dẫn cụ thể. 
+            Nếu context không đủ thông tin, giải thích lý do và suy luận hợp lý dựa trên kiến thức chung."""
+            
+            # Chuẩn bị messages với toàn bộ lịch sử (giới hạn bởi max_history)
+            messages = [
+                {"role": "system", "content": system_prompt},
+                *self.conversation_history[-self.max_history:],  # Lịch sử gần nhất
+                {"role": "user", "content": f"Context: {context}\nCâu hỏi: {query}"}
+            ]
+
+            # Gọi GPT-4o
             response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=messages,
                 temperature=0.3,
-                max_tokens=1500  # Trung bình giữa 1000 và 2000
+                max_tokens=1500
             )
             answer = response.choices[0].message.content.strip()
 
-            # Cập nhật lịch sử
+            # Cập nhật lịch sử hội thoại
             self.conversation_history.append({"role": "user", "content": query})
             self.conversation_history.append({"role": "assistant", "content": answer})
-            if len(self.conversation_history) > 10:  # Giới hạn 5 cặp Q&A
-                self.conversation_history = self.conversation_history[-10:]
+            if len(self.conversation_history) > self.max_history * 3:
+                self.conversation_history = self.conversation_history[-self.max_history * 3:]
 
             # Lưu cache
             self.cache[cache_key] = answer
@@ -244,6 +247,7 @@ class RAGPipeline:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
 
             return answer
+
         except Exception as e:
             self.logger.error(f"❌ Lỗi xử lý câu hỏi: {e}")
             return "Xin lỗi, đã có lỗi xảy ra."

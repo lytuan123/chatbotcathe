@@ -208,71 +208,84 @@ class RAGPipeline:
                 time.sleep(1)
 
     def get_relevant_context(self, query: str, k: int = 5) -> str:
-        """Lấy context với tối ưu hóa cao hơn"""
+        """Lấy context với tối ưu hóa cao hơn và xử lý lỗi chỉ số"""
         try:
             # Tiền xử lý query để tăng chất lượng tìm kiếm
             query = query.strip().lower()
             
-            # Tạo một truy vấn mở rộng bằng cách trích xuất từ khóa
-            expanded_query = query  # Cơ bản giữ nguyên
-            
             # Lấy embedding
-            query_embedding = self.get_embedding(expanded_query)
+            query_embedding = self.get_embedding(query)
 
-            # Tìm nhiều hơn để lọc sau
+            # Tìm kiếm và giới hạn số lượng kết quả
+            max_results = min(k * 3, len(self.processed_texts))
             distances, indices = self.index.search(
                 np.array([query_embedding]),
-                min(k * 3, len(self.processed_texts))  # Tìm nhiều hơn nữa
+                max_results
             )
 
-            # Sử dụng ngưỡng động dựa trên phân phối khoảng cách
+            # Chuyển sang numpy array để dễ xử lý
             distances_array = distances[0]
+            indices_array = indices[0]
+
+            # Áp dụng ngưỡng động
             if len(distances_array) > 0:
                 mean_dist = np.mean(distances_array)
                 std_dist = np.std(distances_array)
-                # Tính ngưỡng động
                 dynamic_threshold = min(0.8, mean_dist + 1.5 * std_dist)
             else:
                 dynamic_threshold = 0.75
             
-            valid_indices = [i for i, d in zip(indices[0], distances[0])
-                           if d < dynamic_threshold]
-
-            if not valid_indices:
+            # Lọc các kết quả dưới ngưỡng - đảm bảo chỉ số trong phạm vi
+            valid_pairs = [(idx, dist) for idx, dist in zip(indices_array, distances_array) 
+                          if dist < dynamic_threshold]
+            
+            if not valid_pairs:
                 return "Không tìm thấy context phù hợp."
 
-            # Sắp xếp và phân loại kết quả
-            sorted_results = sorted([(i, d) for i, d in zip(valid_indices, [distances[0][i] for i in valid_indices])], 
-                                   key=lambda x: x[1])
+            # Sắp xếp theo khoảng cách (giá trị nhỏ hơn = tương đồng hơn)
+            sorted_results = sorted(valid_pairs, key=lambda x: x[1])
             
-            # Nhóm kết quả theo nguồn để đa dạng hóa
+            # Nhóm theo nguồn - sửa cách xử lý nguồn
             sources = {}
-            for i, (idx, score) in enumerate(sorted_results):
-                source = self.processed_texts[idx].split("|")[0].strip()
+            for idx, score in sorted_results:
+                text = self.processed_texts[idx]
+                # Tìm nguồn từ định dạng của text
+                try:
+                    source = text.split("]")[0].replace("[", "").strip()
+                    if "Nguồn:" in source:
+                        source = source.split("|")[0].strip()
+                    else:
+                        source = "Không rõ nguồn"
+                except:
+                    source = "Không rõ nguồn"
+                    
                 if source not in sources:
                     sources[source] = []
                 if len(sources[source]) < 2:  # Tối đa 2 đoạn từ mỗi nguồn
                     sources[source].append((idx, score))
             
-            # Lấy k đoạn văn tốt nhất từ các nguồn đa dạng
+            # Lấy đủ k kết quả từ các nguồn đa dạng
             diverse_results = []
             for source_results in sources.values():
                 diverse_results.extend(source_results)
+            # Sắp xếp và giới hạn số lượng
             diverse_results = sorted(diverse_results, key=lambda x: x[1])[:k]
             
             # Định dạng kết quả
             formatted_contexts = []
-            for idx, (i, score) in enumerate(diverse_results, 1):
+            for i, (idx, score) in enumerate(diverse_results, 1):
                 similarity_percent = 100 * (1 - score)
-                # Thêm một số từ khóa đồng bộ với truy vấn
-                formatted_context = f"[Kết quả #{idx} - Độ phù hợp: {similarity_percent:.1f}%]\n{self.processed_texts[i]}"
+                formatted_context = f"[Kết quả #{i} - Độ phù hợp: {similarity_percent:.1f}%]\n{self.processed_texts[idx]}"
                 formatted_contexts.append(formatted_context)
             
             return "\n\n---\n\n".join(formatted_contexts)
 
         except Exception as e:
-            self.logger.error(f"Lỗi trong get_relevant_context: {str(e)}", exc_info=True)
-            raise
+            self.logger.error(f"❌ Lỗi trong get_relevant_context: {str(e)}", exc_info=True)
+            # Trả về thông báo lỗi chi tiết hơn để gỡ lỗi
+            if "index" in str(e) and "out of bounds" in str(e):
+                return f"Lỗi chỉ số mảng: {str(e)}. Vui lòng liên hệ quản trị viên."
+            return "Đã xảy ra lỗi khi tìm kiếm thông tin. Vui lòng thử lại sau."
 
     def get_answer(self, query: str):
         """Xử lý trả lời với ngữ cảnh hội thoại thông minh."""

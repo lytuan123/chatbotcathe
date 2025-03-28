@@ -103,7 +103,7 @@ class RAGPipeline:
             self.logger.warning(f"⚠️ Lỗi tải cache: {e}. Khởi tạo cache mới.")
             self.cache = {}
 
-    def get_embedding(self, text: str, model="text-embedding-3-small"):  # Dùng model nhỏ hơn để tiết kiệm chi phí
+    def get_embedding(self, text: str, model="text-embedding-3-large"):  # Dùng model nhỏ hơn để tiết kiệm chi phí
         """Lấy embedding với retry mechanism."""
         try:
             response = self.client.embeddings.create(
@@ -158,7 +158,7 @@ class RAGPipeline:
             ]
 
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",  # Dùng model nhỏ hơn, rẻ hơn
+                model="gpt-4o",  # Dùng model nhỏ hơn, rẻ hơn
                 messages=messages,
                 temperature=0.3,
                 max_tokens=500  # Giới hạn output

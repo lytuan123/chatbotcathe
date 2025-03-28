@@ -86,7 +86,7 @@ class RAGPipeline:
             metadata = item.get('metadata', {})
             page = metadata.get('page', 'N/A')
             source = metadata.get('source', 'N/A')
-            self.processed_texts.append(f"[Trang {page} - {source}]\n{content}"
+            self.processed_texts.append(f"[Trang {page} - {source}]\n{content}")
         
         self.logger.info(f"✅ Tải {len(self.processed_texts)} texts thành công")
 
@@ -105,11 +105,11 @@ class RAGPipeline:
             self.logger.warning(f"⚠️ Lỗi tải cache: {e}. Khởi tạo cache mới.")
             self.cache = {}
 
-    def get_embedding(self, text: str, model="text-embedding-3-large"):  # Dùng model nhỏ hơn để tiết kiệm chi phí
+    def get_embedding(self, text: str, model="text-embedding-3-large"):  
         """Lấy embedding với retry mechanism."""
         try:
             response = self.client.embeddings.create(
-                input=[text.replace("\n", " ").strip()[:1000]],  # Giới hạn input
+                input=[text.replace("\n", " ").strip()[:2000]], 
                 model=model
             )
             return np.array(response.data[0].embedding, dtype=np.float32)

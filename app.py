@@ -195,30 +195,13 @@ class RAGPipeline:
         try:
             context = self.get_relevant_context(query)
             
-            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số 1/05/2024 tại Việt Nam. 
-            Nhiệm vụ chính: 
-            - Trả lời câu hỏi dựa trên context và lịch sử hội thoại một cách chính xác, chi tiết và logic
-            - Luôn ưu tiên thông tin từ context trước kiến thức chung
-            
-            Chi tiết thực hiện:
-            1. Phân tích context:
-               • Đọc toàn bộ context một cách kỹ lưỡng
-               • Xác định từng phần thông tin liên quan
-               • Không bỏ qua bất kỳ chi tiết nào
-            
-            2. Xử lý ngữ cảnh:
-               • Nếu context không đủ, giải thích rõ điều còn thiếu
-               • Liên kết thông tin từ các phần context
-               • Ưu tiên thông tin từ context trước kiến thức chung
-            
-            3. Yêu cầu trả lời:
-               • Trả lời chính xác, súc tích
-               • Nếu câu hỏi không có trong context, thừa nhận minh bạch
-               • Cung cấp thông tin chi tiết từ context
-               • LUÔN dẫn chiếu được nguồn thông tin từ context
-            
+            # Prompt kết hợp: chi tiết như bản cũ, linh hoạt như bản mới
+            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số Việt Nam. 
+            Dựa trên context và lịch sử hội thoại (nếu có), trả lời câu hỏi một cách chính xác và chi tiết. 
+            Nếu câu hỏi liên quan đến các câu trước, tự động liên kết ngữ cảnh. 
+            Nếu context không đủ thông tin, hãy nói rõ và suy luận hợp lý nếu phù hợp
             Lưu ý quan trọng: 1 :Tính minh bạch và chính xác là ưu tiên hàng đầu!
-                              2 : Thay vì dùng từ "context", hãy sử dụng từ "nghiệp vụ điều tra " để chuyên nghiệp hơn """
+                              2 : Thay vì dùng từ "context", hãy sử dụng từ "nghiệp vụ điều tra " để chuyên nghiệp hơn."""
             
             messages = [{"role": "system", "content": system_prompt}]
             # Chỉ thêm lịch sử nếu câu hỏi có vẻ nối tiếp
@@ -230,7 +213,7 @@ class RAGPipeline:
                 model="gpt-4o",
                 messages=messages,
                 temperature=0.3,
-                max_tokens=2000  # Trung bình giữa 1000 và 2000
+                max_tokens=1500  # Trung bình giữa 1000 và 2000
             )
             answer = response.choices[0].message.content.strip()
 

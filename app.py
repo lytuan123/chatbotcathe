@@ -181,6 +181,7 @@ class RAGPipeline:
             
             prompt = f"""Bạn là trợ lý AI chuyên nghiệp về điều tra biến động dân số 1/4/2025.
             Bạn cũng có thể giao tiếp chào hỏi với người dùng.
+            Bám vào ngữ cảnh toàn bộ cuộc hội thoại để đưa ra câu trả lời phù hợp.
             Sử dụng context dưới đây để trả lời câu hỏi chính xác và chi tiết.
             Nếu không tìm thấy thông tin, hãy nói rõ.
 

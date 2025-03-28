@@ -167,114 +167,66 @@ class RAGPipeline:
             self.logger.error(f"❌ Lỗi lấy embedding: {e}")
             raise
 
-    def get_relevant_context(self, query: str, k: int = 5) -> str: 
-        """Tìm context liên quan với chiến lược nâng cao"""
+    def get_relevant_context(self, query: str, k: int = 3) -> str:
         try:
-            query_embedding = self.get_embedding(query)
-            
-            # Tăng số lượng documents được tìm kiếm
-            distances, indices = self.index.search(np.array([query_embedding]), k * 3)
-            
-            # Giảm ngưỡng, cho phép nhiều context hơn
-            threshold = 0.5
-            
-            # Simple reranking: sắp xếp lại theo khoảng cách
-            ranked_contexts = [
-                (self.processed_texts[idx], dist) 
-                for idx, dist in zip(indices[0], distances[0]) 
-                if dist < threshold
-            ]
-            
-            # Sắp xếp theo khoảng cách tăng dần
-            ranked_contexts.sort(key=lambda x: x[1])
-            
-            # Lấy top k context có liên quan nhất
-            contexts = [context for context, _ in ranked_contexts[:k]]
-            
-            return "\n\n".join(contexts) if contexts else "Không tìm thấy thông tin phù hợp."
-        
+            query_embedding = self.get_embedding(query, model="text-embedding-3-large")
+            distances, indices = self.index.search(np.array([query_embedding]), min(k, len(self.processed_texts)))
+            threshold = 0.7  
+            valid_indices = [i for i, d in zip(indices[0], distances[0]) if d < threshold]
+            if not valid_indices:
+                return "Không tìm thấy thông tin phù hợp."
+            contexts = [self.processed_texts[i] for i in valid_indices]
+            return "\n\n---\n\n".join(contexts)
         except Exception as e:
             self.logger.error("Lỗi trong get_relevant_context", exc_info=True)
             raise
 
     def get_answer(self, query: str):
-        """Xử lý trả lời với ngữ cảnh hội thoại thông minh và cache nâng cao"""
         query = query.strip()
         if not query:
             return "Vui lòng nhập câu hỏi cụ thể."
-    
+
+        # Kiểm tra cache
+        cache_key = f"{query}||{json.dumps(self.conversation_history[-2:] if self.conversation_history else [])}"
+        if cache_key in self.cache:
+            self.logger.info("✅ Trả lời từ cache")
+            return self.cache[cache_key]
+
         try:
-            # Lấy context từ FAISS
             context = self.get_relevant_context(query)
-    
-            # Tạo cache key từ query và context
-            cache_key = hashlib.md5(f"{query}||{context}".encode()).hexdigest()
             
-            # Kiểm tra cache
-            if cache_key in self.cache:
-                # Kiểm tra thời gian cache
-                current_time = time.time()
-                if current_time - self.cache[cache_key].get('timestamp', 0) < 7 * 24 * 3600:
-                    self.logger.info("✅ Trả lời từ cache")
-                    return self.cache[cache_key]['answer']
-            # Prompt thông minh, yêu cầu GPT-4o tự liên kết ngữ cảnh
-            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số 1/05/2024 tại Việt Nam. 
+            # Prompt kết hợp: chi tiết như bản cũ, linh hoạt như bản mới
+            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số Việt Nam. 
+            Dựa trên context và lịch sử hội thoại (nếu có), trả lời câu hỏi một cách chính xác và chi tiết. 
+            Nếu câu hỏi liên quan đến các câu trước, tự động liên kết ngữ cảnh. 
+            Nếu context không đủ thông tin, hãy nói rõ và suy luận hợp lý nếu phù hợp."""
+            
+            messages = [{"role": "system", "content": system_prompt}]
+            # Chỉ thêm lịch sử nếu câu hỏi có vẻ nối tiếp
+            if self.conversation_history and any(word in query.lower() for word in ["còn", "thế", "vậy", "lý do", "tại sao"]):
+                messages.extend(self.conversation_history[-3:])  # Giới hạn 3 tin nhắn gần nhất
+            messages.append({"role": "user", "content": f"Context: {context}\nCâu hỏi: {query}"})
 
-            Nhiệm vụ chính: 
-            - Trả lời câu hỏi dựa trên context và lịch sử hội thoại một cách chính xác, chi tiết và logic
-            - Luôn ưu tiên thông tin từ context trước kiến thức chung
-            
-            Chi tiết thực hiện:
-            1. Phân tích context:
-               • Đọc toàn bộ context một cách kỹ lưỡng
-               • Xác định từng phần thông tin liên quan
-               • Không bỏ qua bất kỳ chi tiết nào
-            
-            2. Xử lý ngữ cảnh:
-               • Nếu context không đủ, giải thích rõ điều còn thiếu
-               • Liên kết thông tin từ các phần context
-               • Ưu tiên thông tin từ context trước kiến thức chung
-            
-            3. Yêu cầu trả lời:
-               • Trả lời chính xác, súc tích
-               • Nếu câu hỏi không có trong context, thừa nhận minh bạch
-               • Cung cấp thông tin chi tiết từ context
-               • LUÔN dẫn chiếu được nguồn thông tin từ context
-            
-            Lưu ý quan trọng: Tính minh bạch và chính xác là ưu tiên hàng đầu!"""
-            
-            # Chuẩn bị messages với toàn bộ lịch sử (giới hạn bởi max_history)
-            messages = [
-                {"role": "system", "content": system_prompt},
-                *self.conversation_history[-self.max_history:],  # Lịch sử gần nhất
-                {"role": "user", "content": f"Context: {context}\nCâu hỏi: {query}"}
-            ]
-
-            # Gọi GPT-4o
             response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=messages,
                 temperature=0.3,
-                max_tokens=1500
+                max_tokens=1500  # Trung bình giữa 1000 và 2000
             )
             answer = response.choices[0].message.content.strip()
 
-            # Cập nhật lịch sử hội thoại
+            # Cập nhật lịch sử
             self.conversation_history.append({"role": "user", "content": query})
             self.conversation_history.append({"role": "assistant", "content": answer})
-            if len(self.conversation_history) > self.max_history * 3:
-                self.conversation_history = self.conversation_history[-self.max_history * 3:]
+            if len(self.conversation_history) > 10:  # Giới hạn 5 cặp Q&A
+                self.conversation_history = self.conversation_history[-10:]
 
-            # Lưu cache với timestamp
-            self.cache[cache_key] = {
-                'answer': answer,
-                'timestamp': time.time()
-            }
+            # Lưu cache
+            self.cache[cache_key] = answer
             with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
-    
+
             return answer
-    
         except Exception as e:
             self.logger.error(f"❌ Lỗi xử lý câu hỏi: {e}")
             return "Xin lỗi, đã có lỗi xảy ra."

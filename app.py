@@ -214,10 +214,16 @@ class RAGPipeline:
             context = self.get_relevant_context(query)
 
             # Prompt thông minh, yêu cầu GPT-4o tự liên kết ngữ cảnh
-            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số Việt Nam. 
-            Dựa trên context và lịch sử hội thoại dưới đây, trả lời câu hỏi một cách chính xác, chi tiết và logic. 
-            Nếu câu hỏi liên quan đến các câu trước, hãy tự động liên kết ngữ cảnh mà không cần hướng dẫn cụ thể. 
-            Nếu context không đủ thông tin, giải thích lý do và suy luận hợp lý dựa trên kiến thức chung."""
+            system_prompt = """Bạn là trợ lý trả lời câu hỏi về điều tra thống kê biến động dân số 1/4/2025.
+            Hãy trả lời dựa trên context được cung cấp một cách chi tiết và chính xác.
+            Nếu không tìm thấy thông tin trong context, hãy nói rõ điều đó.
+
+            Context:
+            {}
+
+            Câu hỏi: {}
+
+            Trả lời chi tiết dựa trên thông tin trong context:"""
             
             # Chuẩn bị messages với toàn bộ lịch sử (giới hạn bởi max_history)
             messages = [
@@ -231,7 +237,7 @@ class RAGPipeline:
                 model="gpt-4o",
                 messages=messages,
                 temperature=0.3,
-                max_tokens=1500
+                max_tokens=200
             )
             answer = response.choices[0].message.content.strip()
 

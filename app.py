@@ -80,27 +80,53 @@ class RAGPipeline:
         self.index = faiss.read_index(str(self.output_dir / "faiss_index.bin"))
         with open(self.output_dir / "processed_texts.pkl", "rb") as f:
             self.texts = pickle.load(f)
+        
         self.processed_texts = []
         for item in self.texts:
-            content = item.get('content', '')[:2000]  # Tăng giới hạn
+            content = item.get('content', '')
             metadata = item.get('metadata', {})
             page = metadata.get('page', 'N/A')
             source = metadata.get('source', 'N/A')
-            self.processed_texts.append(f"[Trang {page} - {source}]\n{content}")
+            
+            # Chia nhỏ văn bản thành các đoạn 500 từ, có độ chồng chéo 100 từ
+            chunks = self._chunk_text(content, chunk_size=500, overlap=100)
+            
+            for idx, chunk in enumerate(chunks, 1):
+                formatted_chunk = f"[Trang {page} - {source} - Đoạn {idx}]\n{chunk}"
+                self.processed_texts.append(formatted_chunk)
         
-        self.logger.info(f"✅ Tải {len(self.processed_texts)} texts thành công")
+        self.logger.info(f"✅ Tải {len(self.processed_texts)} text chunks thành công")
+    
+    def _chunk_text(self, text, chunk_size=500, overlap=100):
+        words = text.split()
+        chunks = []
+        
+        for i in range(0, len(words), chunk_size - overlap):
+            chunk = ' '.join(words[i:i + chunk_size])
+            chunks.append(chunk)
+        
+        return chunks
 
     def _load_cache(self):
-        """Tải hoặc khởi tạo cache (giữ nguyên)."""
+        """Tải hoặc khởi tạo cache với chiến lược nâng cao"""
         try:
             if self.cache_file.exists():
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
                     self.cache = json.load(f)
+                    
+                # Tự động làm mới cache sau 1 tuần
+                current_time = time.time()
+                for key in list(self.cache.keys()):
+                    if current_time - self.cache[key].get('timestamp', 0) > 7 * 24 * 3600:
+                        del self.cache[key]
             else:
                 self.cache = {}
-                with open(self.cache_file, 'w', encoding='utf-8') as f:
-                    json.dump(self.cache, f, indent=2)
+            
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self.cache, f, ensure_ascii=False, indent=2)
+            
             self.logger.info(f"✅ Tải {len(self.cache)} mục cache")
+        
         except Exception as e:
             self.logger.warning(f"⚠️ Lỗi tải cache: {e}. Khởi tạo cache mới.")
             self.cache = {}
@@ -117,22 +143,42 @@ class RAGPipeline:
             self.logger.error(f"❌ Lỗi lấy embedding: {e}")
             raise
 
-    def get_relevant_context(self, query: str, k: int = 3) -> str: 
-        """Tìm context liên quan với ngưỡng chặt hơn."""
+    def get_relevant_context(self, query: str, k: int = 5) -> str: 
+        """Tìm context liên quan với chiến lược nâng cao"""
         try:
             query_embedding = self.get_embedding(query)
-            distances, indices = self.index.search(np.array([query_embedding]), min(k, len(self.processed_texts)))
-            threshold = 0.7  
-            valid_indices = [i for i, d in zip(indices[0], distances[0]) if d < threshold]
-            if not valid_indices:
-                return "Không tìm thấy thông tin phù hợp."
-            contexts = [self.processed_texts[i] for i in valid_indices]
-            return "\n".join(contexts)
+            
+            # Tăng số lượng documents được tìm kiếm
+            distances, indices = self.index.search(np.array([query_embedding]), k * 2)
+            
+            # Giảm ngưỡng, cho phép nhiều context hơn
+            threshold = 0.8  
+            
+            # Simple reranking: sắp xếp lại theo khoảng cách
+            ranked_contexts = [
+                (self.processed_texts[idx], dist) 
+                for idx, dist in zip(indices[0], distances[0]) 
+                if dist < threshold
+            ]
+            
+            # Sắp xếp theo khoảng cách tăng dần
+            ranked_contexts.sort(key=lambda x: x[1])
+            
+            # Lấy top k context có liên quan nhất
+            contexts = [context for context, _ in ranked_contexts[:k]]
+            
+            return "\n\n".join(contexts) if contexts else "Không tìm thấy thông tin phù hợp."
+        
         except Exception as e:
             self.logger.error("Lỗi trong get_relevant_context", exc_info=True)
             raise
 
     def get_answer(self, query: str):
+        context = self.get_relevant_context(query)
+        cache_key = hashlib.md5(f"{query}||{context}".encode()).hexdigest()
+        
+        if cache_key in self.cache:
+            return self.cache[cache_key]['answer']
         """Xử lý trả lời với ngữ cảnh hội thoại thông minh."""
         query = query.strip()
         if not query:
@@ -149,10 +195,30 @@ class RAGPipeline:
             context = self.get_relevant_context(query)
 
             # Prompt thông minh, yêu cầu GPT-4o tự liên kết ngữ cảnh
-            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số Việt Nam. 
-            Dựa trên context và lịch sử hội thoại dưới đây, trả lời câu hỏi một cách chính xác, chi tiết và logic. 
-            Nếu câu hỏi liên quan đến các câu trước, hãy tự động liên kết ngữ cảnh mà không cần hướng dẫn cụ thể. 
-            Nếu context không đủ thông tin, giải thích lý do và suy luận hợp lý dựa trên kiến thức chung."""
+            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số 1/05/2024 tại Việt Nam. 
+
+            Nhiệm vụ chính: 
+            - Trả lời câu hỏi dựa trên context và lịch sử hội thoại một cách chính xác, chi tiết và logic
+            - Luôn ưu tiên thông tin từ context trước kiến thức chung
+            
+            Chi tiết thực hiện:
+            1. Phân tích context:
+               • Đọc toàn bộ context một cách kỹ lưỡng
+               • Xác định từng phần thông tin liên quan
+               • Không bỏ qua bất kỳ chi tiết nào
+            
+            2. Xử lý ngữ cảnh:
+               • Nếu context không đủ, giải thích rõ điều còn thiếu
+               • Liên kết thông tin từ các phần context
+               • Ưu tiên thông tin từ context trước kiến thức chung
+            
+            3. Yêu cầu trả lời:
+               • Trả lời chính xác, súc tích
+               • Nếu câu hỏi không có trong context, thừa nhận minh bạch
+               • Cung cấp thông tin chi tiết từ context
+               • LUÔN dẫn chiếu được nguồn thông tin từ context
+            
+            Lưu ý quan trọng: Tính minh bạch và chính xác là ưu tiên hàng đầu!"""
             
             # Chuẩn bị messages với toàn bộ lịch sử (giới hạn bởi max_history)
             messages = [

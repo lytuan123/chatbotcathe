@@ -173,10 +173,10 @@ class RAGPipeline:
             query_embedding = self.get_embedding(query)
             
             # Tăng số lượng documents được tìm kiếm
-            distances, indices = self.index.search(np.array([query_embedding]), k * 2)
+            distances, indices = self.index.search(np.array([query_embedding]), k * 3)
             
             # Giảm ngưỡng, cho phép nhiều context hơn
-            threshold = 0.6
+            threshold = 0.5
             
             # Simple reranking: sắp xếp lại theo khoảng cách
             ranked_contexts = [

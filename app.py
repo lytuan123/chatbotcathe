@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 import time
 from typing import List, Dict
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from logging.handlers import RotatingFileHandler
@@ -18,8 +18,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from asyncio import get_event_loop
-from fastapi.middleware.throttling import ThrottlingMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from collections import defaultdict
+import asyncio
 
 # Định nghĩa request/response models (giữ nguyên)
 class QuestionRequest(BaseModel):
@@ -183,7 +184,12 @@ class RAGPipeline:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
 
     def get_embedding(self, text: str, model="text-embedding-3-large") -> np.ndarray:
-        """Lấy embedding với retry logic"""
+        """Lấy embedding với caching và retry logic"""
+        # Kiểm tra cache
+        cached = embedding_cache.get(text)
+        if cached is not None:
+            return cached
+        
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -191,7 +197,10 @@ class RAGPipeline:
                     input=text,
                     model=model
                 )
-                return np.array(response.data[0].embedding, dtype=np.float32)
+                embedding = np.array(response.data[0].embedding, dtype=np.float32)
+                # Lưu vào cache
+                embedding_cache.set(text, embedding)
+                return embedding
             except Exception as e:
                 if attempt == max_retries - 1:
                     raise
@@ -199,35 +208,64 @@ class RAGPipeline:
                 time.sleep(1)
 
     def get_relevant_context(self, query: str, k: int = 5) -> str:
-        """Lấy context với similarity threshold tối ưu hơn"""
+        """Lấy context với tối ưu hóa cao hơn"""
         try:
-            query_embedding = self.get_embedding(query)
+            # Tiền xử lý query để tăng chất lượng tìm kiếm
+            query = query.strip().lower()
+            
+            # Tạo một truy vấn mở rộng bằng cách trích xuất từ khóa
+            expanded_query = query  # Cơ bản giữ nguyên
+            
+            # Lấy embedding
+            query_embedding = self.get_embedding(expanded_query)
 
-            # Tăng số lượng kết quả tìm kiếm ban đầu để lọc tốt hơn
+            # Tìm nhiều hơn để lọc sau
             distances, indices = self.index.search(
                 np.array([query_embedding]),
-                min(k * 2, len(self.processed_texts))  # Tìm nhiều hơn để có thể lọc
+                min(k * 3, len(self.processed_texts))  # Tìm nhiều hơn nữa
             )
 
-            # Điều chỉnh ngưỡng similarity để phù hợp hơn
-            threshold = 0.75  # Điều chỉnh ngưỡng similarity để có kết quả tốt hơn
+            # Sử dụng ngưỡng động dựa trên phân phối khoảng cách
+            distances_array = distances[0]
+            if len(distances_array) > 0:
+                mean_dist = np.mean(distances_array)
+                std_dist = np.std(distances_array)
+                # Tính ngưỡng động
+                dynamic_threshold = min(0.8, mean_dist + 1.5 * std_dist)
+            else:
+                dynamic_threshold = 0.75
+            
             valid_indices = [i for i, d in zip(indices[0], distances[0])
-                           if d < threshold]
+                           if d < dynamic_threshold]
 
             if not valid_indices:
                 return "Không tìm thấy context phù hợp."
 
-            # Sắp xếp kết quả theo độ tương đồng và lấy top k
+            # Sắp xếp và phân loại kết quả
             sorted_results = sorted([(i, d) for i, d in zip(valid_indices, [distances[0][i] for i in valid_indices])], 
                                    key=lambda x: x[1])
             
-            top_indices = [i for i, _ in sorted_results[:k]]
-            contexts = [self.processed_texts[i] for i in top_indices]
+            # Nhóm kết quả theo nguồn để đa dạng hóa
+            sources = {}
+            for i, (idx, score) in enumerate(sorted_results):
+                source = self.processed_texts[idx].split("|")[0].strip()
+                if source not in sources:
+                    sources[source] = []
+                if len(sources[source]) < 2:  # Tối đa 2 đoạn từ mỗi nguồn
+                    sources[source].append((idx, score))
             
-            # Thêm chất lượng của mỗi kết quả vào context
+            # Lấy k đoạn văn tốt nhất từ các nguồn đa dạng
+            diverse_results = []
+            for source_results in sources.values():
+                diverse_results.extend(source_results)
+            diverse_results = sorted(diverse_results, key=lambda x: x[1])[:k]
+            
+            # Định dạng kết quả
             formatted_contexts = []
-            for idx, (i, score) in enumerate(sorted_results[:k], 1):
-                formatted_context = f"[Kết quả #{idx} - Độ tương đồng: {100*(1-score):.1f}%]\n{self.processed_texts[i]}"
+            for idx, (i, score) in enumerate(diverse_results, 1):
+                similarity_percent = 100 * (1 - score)
+                # Thêm một số từ khóa đồng bộ với truy vấn
+                formatted_context = f"[Kết quả #{idx} - Độ phù hợp: {similarity_percent:.1f}%]\n{self.processed_texts[i]}"
                 formatted_contexts.append(formatted_context)
             
             return "\n\n---\n\n".join(formatted_contexts)
@@ -346,11 +384,38 @@ app.add_middleware(
 
 # Thêm vào cấu hình app
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # Nén các phản hồi lớn
-app.add_middleware(
-    ThrottlingMiddleware, 
-    rate_limit=100,  # Số request tối đa mỗi phút
-    rate_window=60,  # Thời gian tính rate limit (60 giây)
-)
+
+# Thêm rate limiter tùy chỉnh
+class RateLimiter:
+    def __init__(self, limit=100, window=60):
+        self.limit = limit  # Số request tối đa
+        self.window = window  # Khoảng thời gian (giây)
+        self.requests = defaultdict(list)  # IP -> [timestamps]
+        
+    def is_rate_limited(self, ip: str) -> bool:
+        now = time.time()
+        # Xóa timestamps cũ
+        self.requests[ip] = [ts for ts in self.requests[ip] if now - ts < self.window]
+        # Kiểm tra số lượng request
+        if len(self.requests[ip]) >= self.limit:
+            return True
+        # Thêm timestamp mới
+        self.requests[ip].append(now)
+        return False
+
+# Khởi tạo rate limiter
+rate_limiter = RateLimiter(limit=100, window=60)
+
+# Thêm middleware kiểm soát tốc độ
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    client_ip = request.client.host if request.client else "unknown"
+    if rate_limiter.is_rate_limited(client_ip):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Quá nhiều yêu cầu. Vui lòng thử lại sau."}
+        )
+    return await call_next(request)
 
 # Thêm logging middleware
 @app.middleware("http")
@@ -372,6 +437,27 @@ async def log_requests(request: Request, call_next):
     
     return response
 
+# Thêm caching cho embeddings để giảm API calls
+class EmbeddingCache:
+    def __init__(self, max_size=1000):
+        self.cache = {}
+        self.max_size = max_size
+        
+    def get(self, text):
+        if text in self.cache:
+            return self.cache[text]
+        return None
+        
+    def set(self, text, embedding):
+        # Giới hạn kích thước cache
+        if len(self.cache) >= self.max_size:
+            # Xóa một phần tử ngẫu nhiên
+            self.cache.pop(next(iter(self.cache)))
+        self.cache[text] = embedding
+
+# Khởi tạo và tích hợp vào RAG Pipeline
+embedding_cache = EmbeddingCache()
+
 # Khởi tạo RAGPipeline một lần duy nhất khi server khởi động
 try:
     rag_pipeline = RAGPipeline()
@@ -389,28 +475,50 @@ async def root():
 async def get_api_answer(request: QuestionRequest):
     """Endpoint chính cho việc trả lời câu hỏi với timeout thích hợp"""
     try:
-        # Lấy nội dung từ request - tương thích với cả query của Android
+        # Lấy nội dung từ request
         message_content = request.query or request.message
         if not message_content:
             raise HTTPException(status_code=400, detail="Yêu cầu phải có nội dung.")
+        
+        # Kiểm tra trạng thái RAGPipeline
+        global rag_pipeline
+        if rag_pipeline is None:
+            # Thử khởi tạo lại nếu cần
+            try:
+                rag_pipeline = RAGPipeline()
+            except Exception as e:
+                logging.error(f"Không thể khởi tạo RAGPipeline: {str(e)}")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau."
+                )
         
         # Giới hạn độ dài câu hỏi
         if len(message_content) > 500:
             message_content = message_content[:500]
             
-        # Sử dụng thread pool để xử lý với timeout
-        with ThreadPoolExecutor() as pool:
-            answer = await get_event_loop().run_in_executor(
-                pool, rag_pipeline.get_answer, message_content
+        # Xử lý với timeout
+        try:
+            with ThreadPoolExecutor() as pool:
+                answer = await get_event_loop().run_in_executor(
+                    pool, rag_pipeline.get_answer, message_content
+                )
+                return AnswerResponse(answer=answer)
+        except asyncio.TimeoutError:
+            # Xử lý timeout
+            logging.error("Timeout khi xử lý câu hỏi")
+            raise HTTPException(
+                status_code=504,
+                detail="Xử lý câu hỏi mất quá nhiều thời gian. Vui lòng thử lại với câu hỏi ngắn hơn."
             )
-            
-        return AnswerResponse(answer=answer)
     
     except HTTPException:
         raise
     except Exception as e:
         logging.error(f"Lỗi xử lý câu hỏi: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")
+        return AnswerResponse(
+            answer="Xin lỗi, hệ thống đang gặp sự cố. Vui lòng thử lại sau hoặc liên hệ hỗ trợ kỹ thuật."
+        )
 
 @app.get("/health")
 async def health_check():

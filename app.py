@@ -89,8 +89,8 @@ class RAGPipeline:
             page = metadata.get('page', 'N/A')
             source = metadata.get('source', 'N/A')
             
-            # Chia nhỏ văn bản thành các đoạn 500 từ, có độ chồng chéo 100 từ
-            chunks = self._chunk_text(content, chunk_size=500, overlap=100)
+            # Chia nhỏ văn bản thành các đoạn 1000 từ, có độ chồng chéo 100 từ
+            chunks = self._chunk_text(content, chunk_size=1000, overlap=100)
             
             for idx, chunk in enumerate(chunks, 1):
                 formatted_chunk = f"[Trang {page} - {source} - Đoạn {idx}]\n{chunk}"
@@ -98,7 +98,7 @@ class RAGPipeline:
         
         self.logger.info(f"✅ Tải {len(self.processed_texts)} text chunks thành công")
     
-    def _chunk_text(self, text, chunk_size=500, overlap=100):
+    def _chunk_text(self, text, chunk_size=1000, overlap=100):
         words = text.split()
         chunks = []
         
@@ -176,7 +176,7 @@ class RAGPipeline:
             distances, indices = self.index.search(np.array([query_embedding]), k * 2)
             
             # Giảm ngưỡng, cho phép nhiều context hơn
-            threshold = 0.8  
+            threshold = 0.6
             
             # Simple reranking: sắp xếp lại theo khoảng cách
             ranked_contexts = [

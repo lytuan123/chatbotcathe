@@ -155,32 +155,37 @@ class RAGPipeline:
             with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
 
-    def get_embedding(self, text: str, model="text-embedding-3-large"):  
-        """Lấy embedding với retry mechanism."""
-        try:
-            response = self.client.embeddings.create(
-                input=[text.replace("\n", " ").strip()[:2000]], 
-                model=model
-            )
-            return np.array(response.data[0].embedding, dtype=np.float32)
-        except Exception as e:
-            self.logger.error(f"❌ Lỗi lấy embedding: {e}")
-            raise
+    def get_embedding(self, text: str) -> np.ndarray:
+        """Lấy embedding với retry logic"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.embeddings.create(
+                    input=text,
+                    model="text-embedding-3-large"
+                )
+                return np.array(response.data[0].embedding, dtype=np.float32)
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                self.logger.warning(f"Retry {attempt + 1}/{max_retries} for embedding")
+                time.sleep(1)
 
     def get_relevant_context(self, query: str, k: int = 3) -> str:
-        """Tìm context liên quan từ FAISS với ngưỡng similarity."""
+        """Lấy context với similarity threshold"""
         try:
             query_embedding = self.get_embedding(query)
 
-            # Batch search trong FAISS
+            # Sử dụng batch search để tối ưu
             distances, indices = self.index.search(
                 np.array([query_embedding]),
                 min(k, len(self.processed_texts))
             )
 
-            # Lọc kết quả với ngưỡng similarity
+            # Lọc kết quả theo ngưỡng similarity
             threshold = 0.7
-            valid_indices = [i for i, d in zip(indices[0], distances[0]) if d < threshold]
+            valid_indices = [i for i, d in zip(indices[0], distances[0])
+                           if d < threshold]
 
             if not valid_indices:
                 return "Không tìm thấy context phù hợp."

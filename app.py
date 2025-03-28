@@ -168,18 +168,26 @@ class RAGPipeline:
             raise
 
     def get_relevant_context(self, query: str, k: int = 3) -> str:
+        """Tìm context liên quan từ FAISS với ngưỡng similarity."""
         try:
-            query_embedding = self.get_embedding(query, model="text-embedding-3-large")
-            distances, indices = self.index.search(np.array([query_embedding]), min(k, len(self.processed_texts)))
-            threshold = 0.7  
+            query_embedding = self.get_embedding(query)
+
+            # Batch search trong FAISS
+            distances, indices = self.index.search(
+                np.array([query_embedding]),
+                min(k, len(self.processed_texts))
+            )
+
+            # Lọc kết quả với ngưỡng similarity
+            threshold = 0.7
             valid_indices = [i for i, d in zip(indices[0], distances[0]) if d < threshold]
+
             if not valid_indices:
-                return "Không tìm thấy thông tin phù hợp."
+                return "Không tìm thấy context phù hợp."
+
             contexts = [self.processed_texts[i] for i in valid_indices]
             return "\n\n---\n\n".join(contexts)
-        except Exception as e:
-            self.logger.error("Lỗi trong get_relevant_context", exc_info=True)
-            raise
+
 
     def get_answer(self, query: str):
         query = query.strip()

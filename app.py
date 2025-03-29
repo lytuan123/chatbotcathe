@@ -339,7 +339,7 @@ class RAGPipeline:
             response = self.client.chat.completions.create(
                 model="o3-mini",
                 messages=messages,
-                temperature=0.3,
+            
                 max_completion_tokens=1000,
                 top_p=0.9,
                 presence_penalty=0.1,

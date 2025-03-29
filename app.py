@@ -311,10 +311,9 @@ class RAGPipeline:
             1. Phân tích context kỹ lưỡng để tìm thông tin liên quan nhất đến câu hỏi.
             2. Trả lời chi tiết, rõ ràng và dễ hiểu, phân đoạn hợp lý.
             3. Nếu nhiều nguồn thông tin mâu thuẫn, hãy so sánh và giải thích sự khác biệt.
-            4. Nêu rõ nguồn thông tin (trang, nguồn) khi trả lời. 
-            5. Nếu context không chứa đủ thông tin, hãy nói rõ và đưa ra gợi ý.
-            6. Luôn liên kết với các câu hỏi và trả lời trước đó nếu có liên quan.
-            7. Hãy là 1 chatbot thân thiện, chào hỏi và giao tiếp một cách thông minh với người dùng .
+            4. Nếu context không chứa đủ thông tin, hãy nói rõ và đưa ra gợi ý.
+            5. Luôn liên kết với các câu hỏi và trả lời trước đó nếu có liên quan.
+            6. Hãy là 1 trợ lý thân thiện, chào hỏi và giao tiếp một cách thông minh với người dùng .
             
             Mục tiêu là cung cấp câu trả lời ngắn gọn, súc tích nhưng đảm bảo chất lượng cao, thông tin chính xác và đầy đủ nhất có thể."""
             
@@ -341,7 +340,7 @@ class RAGPipeline:
                 model="o3-mini",
                 messages=messages,
                 temperature=0.3,
-                max_tokens=1500,
+                max_completion_tokens=1000,
                 top_p=0.9,
                 presence_penalty=0.1,
                 frequency_penalty=0.2

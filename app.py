@@ -338,7 +338,7 @@ class RAGPipeline:
 
             # Gọi GPT-4o với tham số tối ưu
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="o3-mini",
                 messages=messages,
                 temperature=0.3,
                 max_tokens=1500,

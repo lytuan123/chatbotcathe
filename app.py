@@ -337,13 +337,9 @@ class RAGPipeline:
 
             # Gọi GPT-4o với tham số tối ưu
             response = self.client.chat.completions.create(
-                model="o3-mini",
+                model="gpt-4o",
                 messages=messages,
-            
-                max_completion_tokens=1000,
-                
-                
-                
+                max_completion_tokens=1000  
             )
             answer = response.choices[0].message.content.strip()
 

@@ -305,7 +305,7 @@ class RAGPipeline:
 
             # Cải thiện prompt chất lượng cao hơn
             system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số Việt Nam. 
-            Hãy trả lời dựa trên context được cung cấp dưới đây một cách ngắn gọn, súc tích nhưng đảm bảo chính xác và có cấu trúc.
+            Hãy trả lời dựa trên context được cung cấp dưới đây một cách chính xác và có cấu trúc.
             
             Quy tắc trả lời:
             1. Phân tích context kỹ lưỡng để tìm thông tin liên quan nhất đến câu hỏi.
@@ -315,7 +315,7 @@ class RAGPipeline:
             5. Luôn liên kết với các câu hỏi và trả lời trước đó nếu có liên quan.
             6. Hãy là 1 trợ lý thân thiện, chào hỏi và giao tiếp một cách thông minh với người dùng .
             
-            Mục tiêu là cung cấp câu trả lời ngắn gọn, súc tích nhưng đảm bảo chất lượng cao, thông tin chính xác và đầy đủ nhất có thể."""
+            Mục tiêu là cung cấp câu trả lời chất lượng cao, thông tin chính xác và đầy đủ nhất có thể."""
             
             # Chuẩn bị context hiệu quả hơn
             context_prompt = f"CONTEXT ĐƯỢC CUNG CẤP:\n{context}\n\nLỊCH SỬ HỘI THOẠI GẦN ĐÂY:"
@@ -339,7 +339,7 @@ class RAGPipeline:
             response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=messages,
-                max_completion_tokens=1000  
+                max_completion_tokens=2000  
             )
             answer = response.choices[0].message.content.strip()
 

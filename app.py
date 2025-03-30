@@ -304,7 +304,7 @@ class RAGPipeline:
             context = self.get_relevant_context(query, k=5)  # Tăng số lượng context
 
             # Cải thiện prompt chất lượng cao hơn
-            prompt = """Bạn là trợ lý trả lời câu hỏi về điều tra thống kê biến động dân số 1/4/2025.
+            system_prompt = """Bạn là trợ lý trả lời câu hỏi về điều tra thống kê biến động dân số 1/4/2025.
             Hãy trả lời dựa trên context được cung cấp một cách chi tiết và chính xác.
             Nếu không tìm thấy thông tin trong context, hãy nói rõ điều đó.
 

@@ -304,19 +304,16 @@ class RAGPipeline:
             context = self.get_relevant_context(query, k=5)  # Tăng số lượng context
 
             # Cải thiện prompt chất lượng cao hơn
-            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số Việt Nam. 
-            Hãy trả lời dựa trên context được cung cấp dưới đây một cách chính xác và có cấu trúc.
-            
-            Quy tắc trả lời:
-            1. Phân tích context kỹ lưỡng để tìm thông tin liên quan nhất đến câu hỏi.
-            2. Trả lời súc tích, chi tiết, rõ ràng và dễ hiểu, phân đoạn hợp lý.
-            3. Nếu nhiều nguồn thông tin mâu thuẫn, hãy so sánh và giải thích sự khác biệt.
-            4. Nếu context không chứa đủ thông tin, hãy nói rõ và đưa ra gợi ý.
-            5. Luôn liên kết với các câu hỏi và trả lời trước đó nếu có liên quan.
-            6. Hãy là 1 trợ lý thân thiện, chào hỏi và giao tiếp một cách thông minh với người dùng .
-            7. Sử dụng markdown để câu trả lời có cấu trúc tốt, đẹp và dễ nhìn
-            
-            Mục tiêu là cung cấp câu trả lời chất lượng cao, thông tin chính xác và đầy đủ nhất có thể."""
+            prompt = """Bạn là trợ lý trả lời câu hỏi về điều tra thống kê biến động dân số 1/4/2025.
+            Hãy trả lời dựa trên context được cung cấp một cách chi tiết và chính xác.
+            Nếu không tìm thấy thông tin trong context, hãy nói rõ điều đó.
+
+            Context:
+            {}
+
+            Câu hỏi: {}
+
+            Trả lời chi tiết dựa trên thông tin trong context:""".format(context, query)
             
             # Chuẩn bị context hiệu quả hơn
             context_prompt = f"CONTEXT ĐƯỢC CUNG CẤP:\n{context}\n\nLỊCH SỬ HỘI THOẠI GẦN ĐÂY:"

@@ -190,7 +190,7 @@ class RAGPipeline:
         if cached is not None:
             return cached
         
-        max_retries = 5
+        max_retries = 3
         for attempt in range(max_retries):
             try:
                 response = self.client.embeddings.create(
@@ -217,7 +217,7 @@ class RAGPipeline:
             query_embedding = self.get_embedding(query)
 
             # Tìm kiếm và giới hạn số lượng kết quả
-            max_results = min(k * 5, len(self.processed_texts))
+            max_results = min(k * 3, len(self.processed_texts))
             distances, indices = self.index.search(
                 np.array([query_embedding]),
                 max_results
@@ -304,16 +304,19 @@ class RAGPipeline:
             context = self.get_relevant_context(query, k=5)  # Tăng số lượng context
 
             # Cải thiện prompt chất lượng cao hơn
-            system_prompt = """Bạn là trợ lý trả lời câu hỏi về điều tra thống kê biến động dân số 1/4/2025.
-            Hãy trả lời dựa trên context được cung cấp một cách chi tiết và chính xác.
-            Nếu không tìm thấy thông tin trong context, hãy nói rõ điều đó.
-
-            Context:
-            {}
-
-            Câu hỏi: {}
-
-            Trả lời chi tiết dựa trên thông tin trong context:""".format(context, query)
+            system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số Việt Nam. 
+            Hãy trả lời dựa trên context được cung cấp dưới đây một cách chi tiết, chính xác và có cấu trúc.
+            
+            Quy tắc trả lời:
+            1. Phân tích context kỹ lưỡng để tìm thông tin liên quan nhất đến câu hỏi.
+            2. Trả lời chi tiết, rõ ràng và dễ hiểu, phân đoạn hợp lý, sử dụng markdown để câu trả lời được hiển thị đẹp hơn.
+            3. Nếu nhiều nguồn thông tin mâu thuẫn, hãy so sánh và giải thích sự khác biệt.
+            4. Nêu rõ nguồn thông tin (trang, nguồn) khi trả lời.
+            5. Nếu context không chứa đủ thông tin, hãy nói rõ và đưa ra gợi ý.
+            6. Luôn liên kết với các câu hỏi và trả lời trước đó nếu có liên quan.
+            7.Hãy là 1 trợ lý thân thiện, biết cách giao tiếp, chào hỏi với người dùng.
+            
+            Mục tiêu là cung cấp câu trả lời chất lượng cao, thông tin chính xác và đầy đủ nhất có thể."""
             
             # Chuẩn bị context hiệu quả hơn
             context_prompt = f"CONTEXT ĐƯỢC CUNG CẤP:\n{context}\n\nLỊCH SỬ HỘI THOẠI GẦN ĐÂY:"
@@ -337,7 +340,11 @@ class RAGPipeline:
             response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=messages,
-                max_completion_tokens=2000  
+                temperature=0.3,
+                max_tokens=1500,
+                top_p=0.9,
+                presence_penalty=0.1,
+                frequency_penalty=0.2
             )
             answer = response.choices[0].message.content.strip()
 

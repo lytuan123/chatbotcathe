@@ -190,7 +190,7 @@ class RAGPipeline:
         if cached is not None:
             return cached
         
-        max_retries = 3
+        max_retries = 5
         for attempt in range(max_retries):
             try:
                 response = self.client.embeddings.create(
@@ -217,7 +217,7 @@ class RAGPipeline:
             query_embedding = self.get_embedding(query)
 
             # Tìm kiếm và giới hạn số lượng kết quả
-            max_results = min(k * 3, len(self.processed_texts))
+            max_results = min(k * 5, len(self.processed_texts))
             distances, indices = self.index.search(
                 np.array([query_embedding]),
                 max_results
@@ -309,11 +309,12 @@ class RAGPipeline:
             
             Quy tắc trả lời:
             1. Phân tích context kỹ lưỡng để tìm thông tin liên quan nhất đến câu hỏi.
-            2. Trả lời chi tiết, rõ ràng và dễ hiểu, phân đoạn hợp lý.
+            2. Trả lời súc tích, chi tiết, rõ ràng và dễ hiểu, phân đoạn hợp lý.
             3. Nếu nhiều nguồn thông tin mâu thuẫn, hãy so sánh và giải thích sự khác biệt.
             4. Nếu context không chứa đủ thông tin, hãy nói rõ và đưa ra gợi ý.
             5. Luôn liên kết với các câu hỏi và trả lời trước đó nếu có liên quan.
             6. Hãy là 1 trợ lý thân thiện, chào hỏi và giao tiếp một cách thông minh với người dùng .
+            7. Sử dụng markdown để câu trả lời có cấu trúc tốt, đẹp và dễ nhìn
             
             Mục tiêu là cung cấp câu trả lời chất lượng cao, thông tin chính xác và đầy đủ nhất có thể."""
             

@@ -340,11 +340,7 @@ class RAGPipeline:
             response = self.client.chat.completions.create(
                 model="o3-mini",
                 messages=messages,
-                temperature=0.6,
-                max_tokens=1500,
-                top_p=0.9,
-                presence_penalty=0.1,
-                frequency_penalty=0.2
+               
             )
             answer = response.choices[0].message.content.strip()
 

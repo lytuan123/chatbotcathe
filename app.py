@@ -309,7 +309,7 @@ class RAGPipeline:
             
             Quy tắc trả lời:
             1. Phân tích context kỹ lưỡng để tìm thông tin liên quan nhất đến câu hỏi.
-            2. Trả lời súc tích, đầy đủ, rõ ràng và dễ hiểu, phân đoạn hợp lý, sử dụng markdown để câu trả lời được hiển thị đẹp hơn.
+            2. Trả lời súc tích, đầy đủ, rõ ràng và dễ hiểu, phân đoạn hợp lý.
             3. Nếu nhiều nguồn thông tin mâu thuẫn, hãy so sánh và giải thích sự khác biệt.
             4. Nêu rõ nguồn thông tin (trang, nguồn) khi trả lời.
             5. Nếu context không chứa đủ thông tin, hãy nói rõ và đưa ra gợi ý.

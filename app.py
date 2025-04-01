@@ -305,18 +305,18 @@ class RAGPipeline:
 
             # Cải thiện prompt chất lượng cao hơn
             system_prompt = """Bạn là trợ lý AI chuyên về điều tra dân số Việt Nam. 
-            Hãy trả lời dựa trên context được cung cấp dưới đây một cách chi tiết, chính xác và có cấu trúc.
+            Hãy trả lời dựa trên context được cung cấp dưới đây một cách súc tích, chính xác và có cấu trúc.
             
             Quy tắc trả lời:
             1. Phân tích context kỹ lưỡng để tìm thông tin liên quan nhất đến câu hỏi.
-            2. Trả lời chi tiết, rõ ràng và dễ hiểu, phân đoạn hợp lý, sử dụng markdown để câu trả lời được hiển thị đẹp hơn.
+            2. Trả lời súc tích, đầy đủ, rõ ràng và dễ hiểu, phân đoạn hợp lý, sử dụng markdown để câu trả lời được hiển thị đẹp hơn.
             3. Nếu nhiều nguồn thông tin mâu thuẫn, hãy so sánh và giải thích sự khác biệt.
             4. Nêu rõ nguồn thông tin (trang, nguồn) khi trả lời.
             5. Nếu context không chứa đủ thông tin, hãy nói rõ và đưa ra gợi ý.
             6. Luôn liên kết với các câu hỏi và trả lời trước đó nếu có liên quan.
             7.Hãy là 1 trợ lý thân thiện, biết cách giao tiếp, chào hỏi với người dùng.
             
-            Mục tiêu là cung cấp câu trả lời chất lượng cao, thông tin chính xác và đầy đủ nhất có thể."""
+            Mục tiêu là cung cấp câu trả lời chất lượng cao, súc tích, thông tin chính xác và đầy đủ nhất có thể."""
             
             # Chuẩn bị context hiệu quả hơn
             context_prompt = f"CONTEXT ĐƯỢC CUNG CẤP:\n{context}\n\nLỊCH SỬ HỘI THOẠI GẦN ĐÂY:"
